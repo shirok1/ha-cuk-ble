@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from cuktech_ble.constants import FE95_UUID
-from cuktech_ble.scanner import scan_chargers
+from cuktech_ble.scanner import scan_chargers, watch_advertisements
 from cuktech_ble.util import parse_hex
 
 
@@ -54,6 +54,26 @@ class FakeScanner:
         }
 
 
+class FakeWatcher:
+    def __init__(self, *, detection_callback) -> None:
+        self._detection_callback = detection_callback
+
+    async def __aenter__(self):
+        self._detection_callback(
+            FakeDevice("AA:BB:CC:DD:EE:FF"),
+            FakeAdvertisementData(
+                local_name="njcuk.fitting.ad1204",
+                service_data={
+                    FE95_UUID: parse_hex("10 59 0e 66 00 ff ee dd cc bb aa")
+                },
+            ),
+        )
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
 def test_scan_chargers_filters_and_parses_fe95_fixture() -> None:
     chargers = asyncio.run(scan_chargers(timeout=1, scanner_factory=FakeScanner))
 
@@ -78,3 +98,72 @@ def test_scan_chargers_can_filter_by_address() -> None:
     )
 
     assert chargers == []
+
+
+def test_watch_advertisements_waits_for_async_callbacks() -> None:
+    async def run() -> None:
+        callback_started = asyncio.Event()
+        release_callback = asyncio.Event()
+        callback_finished = False
+
+        async def callback(_charger, _snapshot) -> None:
+            nonlocal callback_finished
+            callback_started.set()
+            await release_callback.wait()
+            callback_finished = True
+
+        watch_task = asyncio.create_task(
+            watch_advertisements(
+                timeout=0,
+                callback=callback,
+                scanner_factory=FakeWatcher,
+            )
+        )
+        await callback_started.wait()
+        await asyncio.sleep(0)
+        assert not watch_task.done()
+
+        release_callback.set()
+        snapshots = await watch_task
+
+        assert callback_finished is True
+        assert len(snapshots) == 1
+
+    asyncio.run(run())
+
+
+def test_watch_advertisements_accepts_future_callbacks() -> None:
+    async def run() -> None:
+        def callback(_charger, _snapshot):
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(None)
+            return future
+
+        snapshots = await watch_advertisements(
+            timeout=0,
+            callback=callback,
+            scanner_factory=FakeWatcher,
+        )
+
+        assert len(snapshots) == 1
+
+    asyncio.run(run())
+
+
+def test_watch_advertisements_propagates_callback_errors() -> None:
+    async def run() -> None:
+        async def callback(_charger, _snapshot) -> None:
+            raise RuntimeError("callback failed")
+
+        try:
+            await watch_advertisements(
+                timeout=0,
+                callback=callback,
+                scanner_factory=FakeWatcher,
+            )
+        except RuntimeError as exc:
+            assert str(exc) == "callback failed"
+        else:
+            raise AssertionError("callback error was not propagated")
+
+    asyncio.run(run())

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import inspect
+from collections.abc import Callable
 from typing import Any
 
 from .constants import AD1204_LOCAL_NAME, AD1204_PRODUCT_ID, FE95_UUID
@@ -126,6 +127,7 @@ async def watch_advertisements(
     """Watch AD1204U advertisements and return raw snapshots."""
     scanner_factory = scanner_factory or _bleak_scanner()
     snapshots: list[ChargerSnapshot] = []
+    callback_tasks: list[asyncio.Future[Any]] = []
 
     def detection_callback(device: Any, advertisement_data: Any) -> None:
         if address and str(getattr(device, "address", "")).upper() != address.upper():
@@ -155,12 +157,23 @@ async def watch_advertisements(
         snapshots.append(snapshot)
         if callback is not None:
             result = callback(charger, snapshot)
-            if isinstance(result, Awaitable):
-                asyncio.create_task(result)
+            if inspect.isawaitable(result):
+                callback_tasks.append(asyncio.ensure_future(result))
 
     scanner = scanner_factory(detection_callback=detection_callback)
-    async with scanner:
-        await asyncio.sleep(timeout)
+    try:
+        async with scanner:
+            await asyncio.sleep(timeout)
+        results = await asyncio.gather(*callback_tasks, return_exceptions=True)
+    except BaseException:
+        for task in callback_tasks:
+            task.cancel()
+        await asyncio.gather(*callback_tasks, return_exceptions=True)
+        raise
+
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
 
     return snapshots
 
