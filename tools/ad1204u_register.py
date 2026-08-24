@@ -16,12 +16,12 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
 from bleak import BleakClient
 
+from cuktech_ble.util import write_private_text
 from cuktech_ble.xiaomi import MiAuthClient
 
 
@@ -46,8 +46,7 @@ async def _run(address: str, token_file: Path, did: str | None, debug: bool) -> 
         "bind_key_hex": result.bind_key.hex(),
     }
     token_file.parent.mkdir(parents=True, exist_ok=True)
-    token_file.write_text(json.dumps(payload, indent=2))
-    os.chmod(token_file, 0o600)
+    write_private_text(token_file, json.dumps(payload, indent=2))
     print(f"register OK — token saved to {token_file}", file=sys.stderr)
     return 0
 

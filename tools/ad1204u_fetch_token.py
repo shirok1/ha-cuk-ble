@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from cuktech_ble.util import write_private_text
+
 try:
     import requests
 except ImportError:  # pragma: no cover
@@ -389,10 +391,10 @@ def main() -> int:
             print(f"unexpected token length {len(token)}", file=sys.stderr)
             return 1
         token_hex = token[:24]
-        args.output.write_text(
+        write_private_text(
+            args.output,
             json.dumps({"address": args.address, "token_hex": token_hex}) + "\n"
         )
-        args.output.chmod(0o600)
         print(f"wrote token to {args.output}")
         return 0
 

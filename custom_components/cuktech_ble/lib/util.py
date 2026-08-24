@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -71,3 +74,22 @@ def first_present(values: Sequence[Any]) -> Any | None:
         if value is not None:
             return value
     return None
+
+
+def write_private_text(path: Path, content: str) -> None:
+    """Atomically replace a text file with permissions restricted to its owner."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        text=True,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
