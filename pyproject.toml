@@ -26,6 +26,20 @@ cloud-token = [
     "requests>=2.31",
 ]
 
+[dependency-groups]
+dev = [
+    # Runtime imports reached through Home Assistant's Bluetooth integration.
+    "aiousbwatcher>=1.1.2",
+    "homeassistant-stubs>=2026.8.3",
+    "serialx>=1.8.2",
+    "ty>=0.0.1a14",
+]
+
+[tool.uv.dependency-groups]
+# Current Home Assistant stubs follow HA's newer Python requirement. Keep that
+# tooling constraint separate from the integration's supported Python floor.
+dev = { requires-python = ">=3.14.2" }
+
 [tool.setuptools]
 # The runtime library is vendored inside custom_components/cuktech_ble/lib/
 # so Home Assistant can import it at load time. For dev/tests/tools, we map the
@@ -45,3 +59,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+[tool.ty.src]
+include = ["custom_components/cuktech_ble"]

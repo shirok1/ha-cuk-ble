@@ -30,3 +30,20 @@ That's it — HA creates one device per charger with sensors for each port.
 - [Issues / PRs](https://github.com/zuyan9/ha-cuk-ble/issues)
 
 Unofficial; not affiliated with CUKTECH or Xiaomi.
+
+## Development
+
+Install the regular development environment and run the fast checks with:
+
+```shell
+uv sync --extra test
+uv run ruff check custom_components tests tests_ha
+uv run python -m pytest -q
+```
+
+The current Home Assistant stubs require Python 3.14.2 or newer. Type-check the
+integration with:
+
+```shell
+uv run ty check
+```

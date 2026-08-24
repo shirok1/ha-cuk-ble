@@ -12,6 +12,9 @@ __pycache__/
 venv/
 env/
 
+# OS artifacts
+.DS_Store
+
 # Editor / agent metadata
 .claude/
 .codex
