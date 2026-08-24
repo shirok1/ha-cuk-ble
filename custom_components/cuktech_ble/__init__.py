@@ -158,19 +158,19 @@ def _ensure_device_hierarchy(
     also propagate the parent's area to any sub-devices that don't have one.
     """
     registry = dr.async_get(hass)
-    parent_info = {
-        "config_entry_id": entry.entry_id,
-        "identifiers": {(DOMAIN, address)},
-        "connections": {(dr.CONNECTION_BLUETOOTH, address)},
-        "name": DEFAULT_DEVICE_NAME,
-        "manufacturer": MANUFACTURER,
-        "model": MODEL,
-    }
-    # Home Assistant's device registry stores firmware/software version here.
+    parent_info = dr.DeviceInfo(
+        identifiers={(DOMAIN, address)},
+        connections={(dr.CONNECTION_BLUETOOTH, address)},
+        name=DEFAULT_DEVICE_NAME,
+        manufacturer=MANUFACTURER,
+        model=MODEL,
+    )
     if firmware_version is not None:
         parent_info["sw_version"] = firmware_version
 
-    parent = registry.async_get_or_create(**parent_info)
+    parent = registry.async_get_or_create(
+        config_entry_id=entry.entry_id, **parent_info
+    )
     if firmware_version is not None and parent.sw_version != firmware_version:
         registry.async_update_device(parent.id, sw_version=firmware_version)
     for port in PORTS:
