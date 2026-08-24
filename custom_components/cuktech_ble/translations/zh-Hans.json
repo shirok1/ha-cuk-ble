@@ -1,63 +1,63 @@
 {
     "config": {
         "abort": {
-            "already_configured": "This CUKTECH AD1204U is already configured.",
-            "no_devices_found": "No CUKTECH AD1204U chargers were found.",
-            "not_supported": "This Bluetooth device is not a CUKTECH AD1204U.",
+            "already_configured": "此 CUKTECH AD1204U 已配置。",
+            "no_devices_found": "未找到 CUKTECH AD1204U 充电器。",
+            "not_supported": "此蓝牙设备不是 CUKTECH AD1204U。",
             "reauth_successful": "重新认证成功。"
         },
         "error": {
-            "token_not_hex": "Token must be a hex string.",
-            "token_wrong_length": "Token must decode to 12 bytes (24 hex characters).",
-            "cloud_qr_failed": "QR login failed or timed out. Please try again.",
-            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login.",
-            "cloud_qr_cancelled": "QR login was cancelled.",
-            "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
-            "cloud_fetch_cancelled": "Fetching the Xiaomi device list was cancelled.",
-            "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
-            "cloud_unknown": "Unknown cloud error."
+            "token_not_hex": "Token 必须为十六进制字符串。",
+            "token_wrong_length": "Token 解码后必须为 12 字节（24 位十六进制字符）。",
+            "cloud_qr_failed": "扫码登录失败或超时，请重试。",
+            "cloud_qr_start_failed": "无法连接小米云端以启动扫码登录。",
+            "cloud_qr_cancelled": "扫码登录已取消。",
+            "cloud_fetch_failed": "无法从小米云端获取设备列表。",
+            "cloud_fetch_cancelled": "获取小米设备列表已取消。",
+            "cloud_device_not_found": "在所选的小米区域内未找到此充电器。请尝试其他区域。",
+            "cloud_unknown": "未知的云端错误。"
         },
         "progress": {
-            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan…",
-            "fetching_devices": "Fetching device list from the Xiaomi cloud…"
+            "waiting_for_scan": "打开米家 App，点击扫描图标，扫描此二维码：\n\n![QR code]({qr_url})\n\n等待扫描…",
+            "fetching_devices": "正在从小米云端获取设备列表…"
         },
         "step": {
             "bluetooth_confirm": {
-                "description": "Set up {name}."
+                "description": "设置 {name}。"
             },
             "user": {
                 "data": {
-                    "address": "Device"
+                    "address": "设备"
                 }
             },
             "method": {
                 "title": "选择如何提供蓝牙 Token",
                 "description": "CUKTECH AD1204U 需要一个 12 字节的蓝牙 Token。您可以从小米云端自动获取，或者手动输入。",
                 "menu_options": {
-                    "cloud": "从小米云端获取 (扫码登录)",
+                    "cloud": "从小米云端获取（扫码登录）",
                     "manual": "手动输入 Token"
                 }
             },
             "cloud_region": {
-                "title": "Xiaomi account region",
-                "description": "Pick the region your Mi Home account is registered in. If unsure, try **cn** first, then **de** or **sg**.",
+                "title": "小米账号区域",
+                "description": "请选择您的米家账号所在区域。如不确定，请先尝试 **cn**，然后尝试 **de** 或 **sg**。",
                 "data": {
-                    "region": "Region"
+                    "region": "区域"
                 }
             },
             "cloud_qr": {
-                "title": "Scan with the Mi Home app",
-                "description": "Open the Mi Home app, tap the scan icon, and scan the QR code below.\n\n![QR code]({qr_url})"
+                "title": "使用米家 App 扫码",
+                "description": "打开米家 App，点击扫描图标，扫描下方二维码。\n\n![QR code]({qr_url})"
             },
             "cloud_error": {
-                "title": "Cloud login problem",
-                "description": "Something went wrong: **{reason}**.\n\nSubmit to go back and try again."
+                "title": "云端登录问题",
+                "description": "出现问题：**{reason}**。\n\n点击提交返回并重试。"
             },
             "token": {
-                "title": "Enter BLE token for {name}",
-                "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
+                "title": "输入 {name} 的蓝牙 Token",
+                "description": "请粘贴此设备的 24 位（12 字节）十六进制 Token。您可以使用本集成附带的 tools/ad1204u_fetch_token.py 脚本从小米账号中获取。",
                 "data": {
-                    "token": "BLE token (hex)"
+                    "token": "蓝牙 Token（十六进制）"
                 }
             },
             "reauth_confirm": {
@@ -72,14 +72,14 @@
     "selector": {
         "cloud_region": {
             "options": {
-                "cn": "China (cn)",
-                "de": "Europe (de)",
-                "us": "United States (us)",
-                "ru": "Russia (ru)",
-                "tw": "Taiwan (tw)",
-                "sg": "Singapore (sg)",
-                "in": "India (in)",
-                "i2": "India alt (i2)"
+                "cn": "中国大陆（cn）",
+                "de": "欧洲（de）",
+                "us": "美国（us）",
+                "ru": "俄罗斯（ru）",
+                "tw": "中国台湾（tw）",
+                "sg": "新加坡（sg）",
+                "in": "印度（in）",
+                "i2": "印度备用（i2）"
             }
         }
     },
@@ -102,13 +102,13 @@
             "port_protocol": {
                 "name": "协议",
                 "state": {
-                    "idle": "Idle",
+                    "idle": "空闲",
                     "pd": "PD",
-                    "pd_fixed": "PD Fixed",
+                    "pd_fixed": "PD 固定",
                     "pd_pps": "PD PPS",
                     "usb_a": "USB-A",
-                    "usb_a_qc": "USB-A (QC)",
-                    "unknown": "Unknown"
+                    "usb_a_qc": "USB-A（QC）",
+                    "unknown": "未知"
                 }
             },
             "pdo_cap": {
@@ -163,9 +163,9 @@
             "init": {
                 "data": {
                     "update_period": "完整状态刷新间隔（秒）",
-                    "idle_release": "Release BLE connection after login or last write (seconds, 0 = keep connected)",
-                    "connection_timeout": "Connection timeout (seconds)",
-                    "bluez_start_notify": "Use BlueZ start-notify hint (Linux)"
+                    "idle_release": "登录或最后一次写入后释放蓝牙连接（秒，0 = 保持连接）",
+                    "connection_timeout": "连接超时（秒）",
+                    "bluez_start_notify": "使用 BlueZ start-notify 提示（Linux）"
                 }
             }
         }
