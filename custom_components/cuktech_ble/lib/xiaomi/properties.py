@@ -192,12 +192,18 @@ async def set_property(
     *,
     seq: int | None = None,
     u32: bool = False,
+    timeout: float | None = None,
 ) -> None:
-    """Write one property. Raises MiotProtocolError on non-zero status."""
+    """Write one property. Raises MiotProtocolError on non-zero status.
+
+    ``timeout`` bounds only the wait for the set-properties response; the
+    caller decides the retry policy (the Mi Home plugin retries a response
+    timeout once). Raises MiSessionTimeout when that wait expires.
+    """
     if seq is None:
         seq = session.next_sequence()
     request = encode_set_property(seq, siid, piid, value, u32=u32)
-    response_pt = await session.send_request(request)
+    response_pt = await session.send_request(request, timeout=timeout)
     results = parse_set_response(response_pt)
     if len(results) != 1:
         raise MiotProtocolError(

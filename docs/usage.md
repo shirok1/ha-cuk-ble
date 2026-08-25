@@ -61,6 +61,13 @@ Charger-level controls (on the parent device):
   setting values. The integration ACKs and coalesces them immediately; the
   interval above is a fallback full-state reconciliation, not the primary
   telemetry path.
+- **Switch feedback:** a control flips as soon as the charger's
+  set-properties response confirms the write (retried once on a response
+  timeout). The charger's own property-changed push stays authoritative, and
+  a single debounced re-read ~3 s later reconciles a missed push. Failed
+  writes keep the previous state and surface as service-call errors. This
+  mirrors the official Mi Home plugin, which never re-reads inline after a
+  write.
 - **One BLE peer at a time.** The charger only accepts a single Bluetooth
   client. While Mi Home is open and connected on a phone or tablet, HA
   can't reach the charger and entities will go *unavailable*. Same the

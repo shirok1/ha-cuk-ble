@@ -63,14 +63,20 @@ def test_home_assistant_skeleton_registers_expected_platforms() -> None:
     assert "Platform.BUTTON" not in init_py
 
 
-def test_only_capture_verified_switches_are_exposed() -> None:
+def test_verified_switches_and_port_ctl_are_exposed() -> None:
     switch_py = Path("custom_components/cuktech_ble/switch.py").read_text()
 
-    assert "AD1204UPortSwitch" not in switch_py
-    assert "AD1204UProtocolSwitch" not in switch_py
-    assert "0x0010" not in switch_py
-    assert "0x0015" not in switch_py
+    # Port-enable switches use PIID 16 (port_ctl) — bit mapping confirmed
+    # in cuktech-ble-controller PORT_BITS and cuktech-ble-server state.py.
+    assert "AD1204UPortEnableSwitch" in switch_py
+    assert "0x10" in switch_py or "PIID 16" in switch_py or "port_ctl" in switch_py
+    # Protocol switches use PIID 21 (protocol_ctl_extend) — bit mapping
+    # confirmed in cuktech-ble-server PROTOCOL_SWITCH_BITS.
+    assert "AD1204UProtocolSwitch" in switch_py
+    assert "0x15" in switch_py or "protocol_ctl_extend" in switch_py
+    # PIID 0x0e (enter) is write-only with unknown semantics — still excluded.
     assert "0x000e" not in switch_py
+    assert "0x000E" not in switch_py
 
 
 def test_sensor_builder_has_one_voltage_and_current_entity_per_port() -> None:

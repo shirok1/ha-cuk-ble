@@ -89,7 +89,7 @@ def test_set_property_requires_one_matching_success(
     response: bytes, message: str
 ) -> None:
     class FakeSession:
-        async def send_request(self, request: bytes) -> bytes:
+        async def send_request(self, request: bytes, **_kwargs) -> bytes:
             assert request[:4] == bytes.fromhex("0c 20 0d 00")
             return response
 
@@ -104,7 +104,7 @@ def test_set_property_requires_one_matching_success(
 
 def test_set_property_accepts_exact_matching_success() -> None:
     class FakeSession:
-        async def send_request(self, request: bytes) -> bytes:
+        async def send_request(self, request: bytes, **_kwargs) -> bytes:
             assert request[:4] == bytes.fromhex("0c 20 0d 00")
             return bytes.fromhex("0b 20 0d 00 01 01 02 0f 00 00 00")
 

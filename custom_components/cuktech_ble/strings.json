@@ -127,6 +127,21 @@
             },
             "screen_dir_lock": {
                 "name": "Lock screen orientation"
+            },
+            "port_enable": {
+                "name": "Port enable"
+            },
+            "protocol_pd": {
+                "name": "PD"
+            },
+            "protocol_pps": {
+                "name": "PPS"
+            },
+            "protocol_ufcs": {
+                "name": "UFCS"
+            },
+            "protocol_scp": {
+                "name": "SCP"
             }
         },
         "select": {

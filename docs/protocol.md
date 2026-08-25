@@ -113,6 +113,30 @@ twice, 4.5–15 ms apart, while sending each announcement once. Single parcel
 writes are reliable in live integration tests, so this duplication is recorded
 as a vendor behavior rather than copied without an A/B failure test.
 
+### Write feedback model
+
+The Mi Home plugin bundle (`njcuk.fitting.ad1204`) shows how writes are
+confirmed, and the integration follows the same model:
+
+- **The set-properties response is the confirmation.** The app's
+  `isSpecResultOK` treats per-property `code == 0` as success, resends once
+  ~50–100 ms later when the native layer reports timeout (`error.code ===
+  -3`), and rolls back its optimistic UI otherwise. It never re-reads to
+  verify a write.
+- **State stays current through pushes.** After login the app subscribes to
+  `prop.<siid>.<piid>` messages and updates from `properties_changed`
+  events; a retained session performed no steady polling after its initial
+  and UI-triggered reads.
+- **Reconciliation reads are debounced and delayed.** After a port or
+  protocol write the plugin arms `startPortDelayInfoTimer` (1.5–3 s) for one
+  subset re-read — never an inline refresh. Commands are additionally
+  serialized per property (`setPropertyStart`/`setPropertyEnd`, 3 s
+  watchdog) so responses can't pipeline.
+
+Issuing a bulk `get_properties` right after a write instead races the
+charger's setting echo and times out on slow links — the failure mode that
+motivated this design.
+
 ### Offline btsnoop decode
 
 Mi Home captures can be decoded without connecting to the charger again:

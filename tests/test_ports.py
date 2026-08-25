@@ -1,6 +1,11 @@
 import pytest
 
-from cuktech_ble.ports import decode_pdo_caps, decode_port_info
+from cuktech_ble.ports import (
+    PORT_CTL_BIT,
+    PORT_PROPERTY_PIID,
+    decode_pdo_caps,
+    decode_port_info,
+)
 
 
 def test_decode_port_info_splits_bytes_into_voltage_current_protocol() -> None:
@@ -46,3 +51,18 @@ def test_decode_pdo_caps_returns_none_for_zero_byte() -> None:
     caps = decode_pdo_caps(0x0000_0064, high_port="c3", low_port="a")
 
     assert caps == {"a": 100, "c3": None}
+
+
+def test_port_ctl_bit_mapping_matches_reference_repos() -> None:
+    """PIID 16 (port_ctl) bit index must be `piid - 1`.
+
+    Reference: cuktech-ble-server ``1 << (piid - 1)`` and cuktech-ble-controller
+    ``PORT_BITS = {'c1': 0, 'c2': 1, 'c3': 2, 'a': 3}``. A previous ha-cuk-ble
+    write path used the raw piid as the bit index (off-by-one), so toggling a
+    port flipped its neighbour and port "a" wrote bit 4 outside the 4-bit mask.
+    """
+    assert PORT_CTL_BIT == {"c1": 0, "c2": 1, "c3": 2, "a": 3}
+    # bit_index == piid - 1 for every port — the invariant the coordinator's
+    # write path must satisfy to stay consistent with the read path (is_on).
+    for port, piid in PORT_PROPERTY_PIID.items():
+        assert PORT_CTL_BIT[port] == piid - 1

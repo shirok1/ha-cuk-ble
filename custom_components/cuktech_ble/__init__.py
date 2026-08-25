@@ -44,16 +44,6 @@ UNSAFE_LEGACY_SWITCH_KEYS = (
     "port_c2_power",
     "port_c3_power",
     "port_a_power",
-    "c1_pd_protocol",
-    "c1_pps_protocol",
-    "c1_ufcs_protocol",
-    "c2_pd_protocol",
-    "c2_pps_protocol",
-    "c2_ufcs_protocol",
-    "c3_ufcs_protocol",
-    "c3_scp_protocol",
-    "a_ufcs_protocol",
-    "a_scp_protocol",
 )
 
 

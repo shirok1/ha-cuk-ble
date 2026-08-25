@@ -129,6 +129,8 @@ def _make_coordinator(*, idle_release: float) -> AD1204UCoordinator:
     coordinator._connection_timeout = 0.01
     coordinator._idle_task = None
     coordinator._disconnect_task = None
+    coordinator._reconcile_task = None
+    coordinator._reconcile_keys = set()
     coordinator._lock = asyncio.Lock()
     coordinator._client = None
     coordinator._connecting_client = None
@@ -609,7 +611,6 @@ def test_disconnect_generation_rejects_inflight_set(monkeypatch) -> None:
         coordinator._session = session
         coordinator._ensure_connected = AsyncMock(return_value=session)
         coordinator.async_set_update_error = Mock()
-        coordinator.async_refresh = AsyncMock()
 
         async def disconnect_during_set(*_args, **_kwargs) -> None:
             coordinator._handle_disconnect(client)
@@ -627,8 +628,9 @@ def test_disconnect_generation_rejects_inflight_set(monkeypatch) -> None:
         cleanup_task = coordinator._disconnect_task
         if cleanup_task is not None:
             await cleanup_task
-        coordinator.async_refresh.assert_not_awaited()
         assert coordinator._client is None
+        # A rejected write must not leak an optimistic value.
+        assert (2, 5) not in coordinator._property_values
 
     asyncio.run(run())
 
@@ -792,7 +794,71 @@ def test_queued_push_cannot_restore_success_after_disconnect() -> None:
     asyncio.run(run())
 
 
-def test_successful_write_rearms_idle_release(monkeypatch) -> None:
+def test_successful_write_confirms_and_publishes_without_reread(monkeypatch) -> None:
+    """A confirmed write merges optimistically and schedules one reconcile."""
+
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator._arm_idle_release = Mock()
+        set_property = AsyncMock()
+        get_properties = AsyncMock(
+            side_effect=AssertionError("no read may run inline after a write")
+        )
+        monkeypatch.setattr(coordinator_module, "set_property", set_property)
+        monkeypatch.setattr(coordinator_module, "get_properties", get_properties)
+
+        published = []
+
+        def set_updated(data) -> None:
+            published.append(data)
+
+        coordinator.async_set_updated_data = set_updated
+
+        await coordinator.async_set_property(2, 5, 1)
+
+        coordinator._arm_idle_release.assert_called_once_with(client)
+        set_property.assert_awaited_once_with(
+            session, 2, 5, 1, u32=False,
+            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+        )
+        # The confirmed value is applied like the app's optimistic setState.
+        assert coordinator._property_values[(2, 5)].value == 1
+        assert len(published) == 1 and published[0].scene_mode == 1
+        # One debounced re-read is armed for later; nothing blocks on it.
+        reconcile_task = coordinator._reconcile_task
+        assert reconcile_task is not None
+        assert (2, 5) in coordinator._reconcile_keys
+
+    asyncio.run(run())
+
+
+def test_optimistic_value_keeps_device_reported_encoding() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        pv = coordinator_module.PropertyValue
+        # The charger reports screenoff_while_idle as a proper bool even
+        # though Mi Home writes it as u8 — the optimistic value must match
+        # the report shape so the later echo compares equal.
+        coordinator._property_values = {
+            (2, 0x13): pv(2, 0x13, 0, 0x01, 0x00, False),
+        }
+
+        item = coordinator._optimistic_property_value(2, 0x13, 1)
+
+        assert item.type_byte == 0x01 and item.marker == 0x00
+        assert item.value is True
+        assert item == pv(2, 0x13, 0, 0x01, 0x00, True)
+
+    asyncio.run(run())
+
+
+def test_write_response_timeout_retries_once(monkeypatch) -> None:
     async def run() -> None:
         coordinator = _make_coordinator(idle_release=300)
         client = FakeClient()
@@ -800,16 +866,111 @@ def test_successful_write_rearms_idle_release(monkeypatch) -> None:
         coordinator._client = client
         coordinator._session = session
         coordinator._ensure_connected = AsyncMock(return_value=session)
-        coordinator._arm_idle_release = Mock()
-        coordinator.async_refresh = AsyncMock()
-        set_property = AsyncMock()
+        set_property = AsyncMock(side_effect=[coordinator_module.MiSessionTimeout(), AsyncMock()])
         monkeypatch.setattr(coordinator_module, "set_property", set_property)
+        monkeypatch.setattr(coordinator_module.asyncio, "sleep", AsyncMock())
+
+        await coordinator.async_set_property(2, 5, 2)
+
+        assert set_property.await_count == 2
+        assert coordinator._property_values[(2, 5)].value == 2
+
+    asyncio.run(run())
+
+
+def test_write_response_timeout_twice_fails_without_merge(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        failure = coordinator_module.MiSessionTimeout("timeout waiting for MIOT response")
+        set_property = AsyncMock(side_effect=[failure, failure])
+        monkeypatch.setattr(coordinator_module, "set_property", set_property)
+        monkeypatch.setattr(coordinator_module.asyncio, "sleep", AsyncMock())
+
+        with pytest.raises(
+            coordinator_module.UpdateFailed, match="set failed"
+        ):
+            await coordinator.async_set_property(2, 5, 2)
+
+        assert set_property.await_count == 2
+        assert (2, 5) not in coordinator._property_values
+        cleanup_task = coordinator._disconnect_task
+        if cleanup_task is not None:
+            await cleanup_task
+        assert coordinator._client is None
+
+    asyncio.run(run())
+
+
+def test_write_reconcile_reads_back_written_properties(monkeypatch) -> None:
+    async def run() -> None:
+        monkeypatch.setattr(coordinator_module, "WRITE_RECONCILE_DELAY", 0.01)
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        set_property = AsyncMock()
+        pv = coordinator_module.PropertyValue
+        # The device clamped the requested scene mode back to 3.
+        get_properties = AsyncMock(
+            return_value={(2, 5): pv(2, 5, 0, 0x01, 0x10, 3)}
+        )
+        monkeypatch.setattr(coordinator_module, "set_property", set_property)
+        monkeypatch.setattr(coordinator_module, "get_properties", get_properties)
+
+        published = []
+        coordinator.async_set_updated_data = published.append
 
         await coordinator.async_set_property(2, 5, 1)
+        assert coordinator._reconcile_task is not None
+        await asyncio.wait_for(coordinator._reconcile_task, timeout=1)
 
-        coordinator._arm_idle_release.assert_called_once_with(client)
-        set_property.assert_awaited_once_with(session, 2, 5, 1, u32=False)
-        coordinator.async_refresh.assert_awaited_once()
+        get_properties.assert_awaited_once_with(session, tuples=((2, 5),))
+        assert len(published) == 2
+        assert published[-1].scene_mode == 3
+
+    asyncio.run(run())
+
+
+def test_write_reconcile_failure_is_silent(monkeypatch) -> None:
+    async def run() -> None:
+        monkeypatch.setattr(coordinator_module, "WRITE_RECONCILE_DELAY", 0.01)
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        get_properties = AsyncMock(
+            side_effect=coordinator_module.MiSessionTimeout("timeout waiting for MIOT response")
+        )
+        monkeypatch.setattr(coordinator_module, "set_property", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "get_properties", get_properties)
+        coordinator.async_set_updated_data = Mock()
+        coordinator.async_set_update_error = Mock()
+
+        await coordinator.async_set_property(2, 5, 1)
+        assert coordinator._reconcile_task is not None
+        await asyncio.wait_for(coordinator._reconcile_task, timeout=1)
+
+        # A missed post-write re-read must not fail the write again, drop
+        # the connection, or mark the coordinator unavailable.
+        get_properties.assert_awaited_once()
+        assert coordinator._client is client
+        coordinator.async_set_update_error.assert_not_called()
+        assert coordinator.async_set_updated_data.call_count == 1
 
     asyncio.run(run())
 
@@ -945,5 +1106,72 @@ def test_shutdown_does_not_cancel_active_idle_cleanup(monkeypatch) -> None:
         assert auth.unsubscribe_calls == 1
         assert client.disconnect_calls == 1
         assert coordinator._idle_task is None
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("port", "enabled", "current", "expected_written"),
+    [
+        # bit index = piid - 1; c1=bit0, c2=bit1, c3=bit2, a=bit3.
+        # Regression for the off-by-one that used the raw piid as the bit index
+        # (which toggled the neighbour port and wrote bit4 for "a").
+        ("c1", True, 0x00, 0x01),
+        ("c2", True, 0x00, 0x02),
+        ("c3", True, 0x00, 0x04),
+        ("a", True, 0x00, 0x08),
+        ("c1", False, 0x0F, 0x0E),
+        ("c2", False, 0x0F, 0x0D),
+        ("c3", False, 0x0F, 0x0B),
+        ("a", False, 0x0F, 0x07),
+    ],
+)
+def test_async_set_port_enabled_writes_correct_bit(
+    port: str, enabled: bool, current: int, expected_written: int
+) -> None:
+    """async_set_port_enabled must set/clear bit (piid-1), not the raw piid."""
+    pv = coordinator_module.PropertyValue
+
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        coordinator._client = client
+        coordinator._session = FakeSubscription()
+        coordinator._property_values = {
+            (2, 0x10): pv(2, 0x10, 0, 0x01, 0x10, current),
+        }
+
+        async def fake_ensure_connected():
+            return coordinator._session
+
+        async def fake_set_property(session, siid, piid, value, **_kwargs):
+            fake_set_property.last = (session, siid, piid, value)
+
+        coordinator._ensure_connected = fake_ensure_connected  # type: ignore[assignment]
+        coordinator._arm_idle_release = Mock()  # type: ignore[assignment]
+        original_set_property = coordinator_module.set_property
+        coordinator_module.set_property = fake_set_property  # type: ignore[assignment]
+        try:
+            await coordinator.async_set_port_enabled(port, enabled)
+        finally:
+            coordinator_module.set_property = original_set_property  # type: ignore[assignment]
+
+        assert fake_set_property.last is not None
+        _session, siid, piid, value = fake_set_property.last
+        assert (siid, piid) == (2, 0x10)
+        assert value == expected_written
+
+    asyncio.run(run())
+
+
+def test_async_set_port_enabled_rejects_unknown_port() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        coordinator._client = FakeClient()
+        coordinator._session = FakeSubscription()
+        coordinator._ensure_connected = AsyncMock(return_value=coordinator._session)  # type: ignore[assignment]
+        coordinator._arm_idle_release = Mock()  # type: ignore[assignment]
+        with pytest.raises(ValueError):
+            await coordinator.async_set_port_enabled("c4", True)
 
     asyncio.run(run())

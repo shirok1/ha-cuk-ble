@@ -127,6 +127,21 @@
             },
             "screen_dir_lock": {
                 "name": "锁定屏幕方向"
+            },
+            "port_enable": {
+                "name": "端口启用"
+            },
+            "protocol_pd": {
+                "name": "PD"
+            },
+            "protocol_pps": {
+                "name": "PPS"
+            },
+            "protocol_ufcs": {
+                "name": "UFCS"
+            },
+            "protocol_scp": {
+                "name": "SCP"
             }
         },
         "select": {

@@ -105,6 +105,15 @@ class MiSessionError(MiAuthError):
     pass
 
 
+class MiSessionTimeout(MiSessionError):
+    """A request timed out waiting for its routed MIOT response.
+
+    Distinct from a transport failure: the session is still usable, so
+    callers may retry the request exactly once (the Mi Home plugin resends
+    after its native layer reports error -3).
+    """
+
+
 class MiSessionReauthenticationRequired(MiSessionError):
     """The session keys must be replaced before another encrypted frame."""
 
@@ -283,8 +292,13 @@ class MiSession:
             )
 
     # ---------------------------------------------------------- frame IO
-    async def send_request(self, plaintext: bytes) -> bytes:
-        """Encrypt and send one request, then await its routed response."""
+    async def send_request(self, plaintext: bytes, *, timeout: float | None = None) -> bytes:
+        """Encrypt and send one request, then await its routed response.
+
+        ``timeout`` overrides the session default for this request only;
+        writes pass a shorter bound so a lost confirmation fails fast enough
+        for the caller's single retry instead of hanging the service call.
+        """
         req_seq = plaintext[2:4] if len(plaintext) >= 4 else b""
         if not req_seq:
             raise MiSessionError("request is missing a sequence number")
@@ -321,9 +335,11 @@ class MiSession:
                 ct = self.encrypt(plaintext, counter)
                 await self._send_encrypted(ct, counter)
                 try:
-                    return await asyncio.wait_for(response, self._timeout)
+                    return await asyncio.wait_for(
+                        response, self._timeout if timeout is None else timeout
+                    )
                 except asyncio.TimeoutError as exc:
-                    raise MiSessionError(
+                    raise MiSessionTimeout(
                         f"timeout waiting for MIOT response seq={req_seq.hex()}"
                     ) from exc
             except asyncio.CancelledError as exc:

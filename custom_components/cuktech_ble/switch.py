@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import AD1204UConfigEntry
 from .coordinator import AD1204UCoordinator, AD1204UData
 from .entity import AD1204UEntity
+from .lib.ports import PORTS, PORT_CTL_BIT
+from .lib.protocol_switches import parse_protocol_switches
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,16 +59,70 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
 )
 
 
+def _port_enabled_getter(port: str) -> Callable[[AD1204UData], bool | None]:
+    bit = PORT_CTL_BIT[port]
+
+    def _get(data: AD1204UData) -> bool | None:
+        if data.port_ctl is None:
+            return None
+        return bool(data.port_ctl & (1 << bit))
+
+    return _get
+
+
+# Per-port protocol switches derived from PIID 21 (protocol_ctl_extend).
+# Only PD/PPS/UFCS/SCP are user-toggleable; the reserved bit is firmware-fixed.
+PROTOCOL_SWITCHES_PER_PORT: dict[str, tuple[str, ...]] = {
+    "c1": ("pd", "pps", "ufcs"),
+    "c2": ("pd", "pps", "ufcs"),
+    "c3": ("ufcs", "scp"),
+    "a": ("ufcs", "scp"),
+}
+
+
+def _protocol_switch_getter(
+    port: str, switch: str
+) -> Callable[[AD1204UData], bool | None]:
+    def _get(data: AD1204UData) -> bool | None:
+        if data.protocol_ctl_extend is None:
+            return None
+        switches = parse_protocol_switches(data.protocol_ctl_extend)
+        return switches.get(port, {}).get(switch)
+
+    return _get
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: AD1204UConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
+    entities: list[SwitchEntity] = [
         AD1204USwitch(coordinator, description=description)
         for description in SWITCHES
-    )
+    ]
+    # Per-port enable switches (PIID 16 bitmap, read-modify-write).
+    for port in PORTS:
+        entities.append(
+            AD1204UPortEnableSwitch(
+                coordinator,
+                port=port,
+                getter=_port_enabled_getter(port),
+            )
+        )
+    # Per-port protocol switches (PIID 21 u32, read-modify-write).
+    for port in PORTS:
+        for switch in PROTOCOL_SWITCHES_PER_PORT[port]:
+            entities.append(
+                AD1204UProtocolSwitch(
+                    coordinator,
+                    port=port,
+                    switch_name=switch,
+                    getter=_protocol_switch_getter(port, switch),
+                )
+            )
+    async_add_entities(entities)
 
 
 class AD1204USwitch(AD1204UEntity, SwitchEntity):
@@ -104,4 +161,82 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
             self.entity_description.siid,
             self.entity_description.piid,
             payload,
+        )
+
+
+class AD1204UPortEnableSwitch(AD1204UEntity, SwitchEntity):
+    """Per-port power enable switch backed by PIID 16 (port_ctl bitmap)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: AD1204UCoordinator,
+        *,
+        port: str,
+        getter: Callable[[AD1204UData], bool | None],
+    ) -> None:
+        super().__init__(coordinator, port=port)
+        self._port = port
+        self._getter = getter
+        self.entity_description = SwitchEntityDescription(
+            key=f"{port}_port_enable",
+            translation_key="port_enable",
+        )
+        self._attr_unique_id = f"{coordinator.address}_{port}_port_enable"
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return self._getter(data)
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_port_enabled(self._port, True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_port_enabled(self._port, False)
+
+
+class AD1204UProtocolSwitch(AD1204UEntity, SwitchEntity):
+    """Per-port fast-charging protocol switch backed by PIID 21 (u32)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: AD1204UCoordinator,
+        *,
+        port: str,
+        switch_name: str,
+        getter: Callable[[AD1204UData], bool | None],
+    ) -> None:
+        super().__init__(coordinator, port=port)
+        self._port = port
+        self._switch_name = switch_name
+        self._getter = getter
+        self.entity_description = SwitchEntityDescription(
+            key=f"{port}_{switch_name}_protocol",
+            translation_key=f"protocol_{switch_name}",
+        )
+        self._attr_unique_id = (
+            f"{coordinator.address}_{port}_{switch_name}_protocol"
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return self._getter(data)
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_protocol_switch(
+            self._port, self._switch_name, True
+        )
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_protocol_switch(
+            self._port, self._switch_name, False
         )

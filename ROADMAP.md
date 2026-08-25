@@ -32,15 +32,19 @@ file is the shareable summary.
   writes, piid `0x11` / `0x12`). First capture missed the Port submenu
   toggles — retry with tap coordinates resolved via `uiautomator` after
   entering the submenu, or by manual touch while capturing.
-- [ ] **`port_ctl`** (u8 bitmap, piid `0x10`). Mi Home exposes a per-port
-  power button; capture one toggle.
+- [x] **`port_ctl`** (u8 bitmap, piid `0x10`). Mi Home exposes a per-port
+  power button; bit mapping confirmed in cuktech-ble-controller
+  (`PORT_BITS = {c1:0, c2:1, c3:2, a:3}`) and cuktech-ble-server
+  (`port_ctl` decode in `state.py`).
+- [x] **`protocol_ctl_extend`** (u32, piid `0x15`). Per-port protocol
+  switch bits confirmed in cuktech-ble-server `PROTOCOL_SWITCH_BITS`.
 - [ ] **piid `0x0e` (`enter`)** — the current capture contains no writes.
   Determine when the app uses it before attempting any controlled values.
 
 ## Integration polish (after protocol masks land)
 
 - [ ] Switches for per-port UFCS/PD/PPS enable.
-- [ ] Switches for the `port_ctl` port-enable bitmap, after a deliberate Mi
+- [x] Switches for the `port_ctl` port-enable bitmap, after a deliberate Mi
   Home toggle capture confirms its writable bit mapping.
 - [x] Select entity for `screen_save_time` (u8, piid `0x06`)
 

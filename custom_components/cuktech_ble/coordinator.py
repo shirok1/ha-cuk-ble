@@ -8,16 +8,28 @@ Strategy: push-driven BLE session with periodic reconciliation and an idle lease
   are quiet.
 - Release the connection ``idle_release`` seconds after login or the last explicit
   property write. Scheduled polls do not extend the lease; the next poll reconnects.
+
+Writes follow the official Mi Home plugin's feedback model:
+
+- The set-properties response is the authoritative confirmation; a response
+  timeout is retried once after a short pause (the plugin resends on -3).
+- The confirmed value is merged optimistically and published immediately, so
+  entities flip as soon as the charger accepts a write — no blocking re-read.
+- The charger echoes every setting change as a property-changed push; those
+  pushes keep the state honest afterwards.
+- One debounced single-property re-read ~3 s later reconciles a missed echo.
+  It never blocks the caller and its failure never fails the write or drops
+  the connection.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, AsyncIterator
 
 from bleak import BleakClient
 from bleak.exc import BleakError
@@ -28,6 +40,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .const import (
+    WRITE_CONFIRM_TIMEOUT,
+    WRITE_RECONCILE_DELAY,
+    WRITE_RETRY_DELAY,
+)
 from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .lib.ports import (
     PIID_TO_PORT,
@@ -45,7 +62,7 @@ from .lib.xiaomi.properties import (
     parse_notification,
     set_property,
 )
-from .lib.xiaomi.session import MiSession
+from .lib.xiaomi.session import MiSession, MiSessionTimeout
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +124,8 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._lock = asyncio.Lock()
         self._idle_task: asyncio.Task[None] | None = None
         self._disconnect_task: asyncio.Task[None] | None = None
+        self._reconcile_task: asyncio.Task[None] | None = None
+        self._reconcile_keys: set[tuple[int, int]] = set()
         self._property_values: dict[tuple[int, int], PropertyValue] = {}
         self._pending_notification_values: dict[tuple[int, int], PropertyValue] = {}
         self._baseline_session: MiSession | None = None
@@ -182,18 +201,26 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         await super().async_shutdown()
 
         # Waiting for the lock lets an in-flight poll, write, or idle disconnect
-        # finish before cleanup. Cancel the timer only after owning the lock so
-        # cancellation cannot interrupt it halfway through _disconnect().
+        # finish before cleanup. Cancel the timers only after owning the lock so
+        # cancellation cannot interrupt them halfway through _disconnect().
         async with self._lock:
             idle_task = self._idle_task
             self._idle_task = None
             if idle_task is not None and idle_task is not asyncio.current_task():
                 idle_task.cancel()
+            reconcile_task = self._reconcile_task
+            self._reconcile_task = None
+            if (
+                reconcile_task is not None
+                and reconcile_task is not asyncio.current_task()
+            ):
+                reconcile_task.cancel()
             await self._disconnect()
 
-        if idle_task is not None and idle_task is not asyncio.current_task():
-            with suppress(asyncio.CancelledError):
-                await idle_task
+        for task in (idle_task, reconcile_task):
+            if task is not None and task is not asyncio.current_task():
+                with suppress(asyncio.CancelledError):
+                    await task
 
         disconnect_task = self._disconnect_task
         if (
@@ -356,6 +383,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._client = None
         self._property_values.clear()
         self._pending_notification_values.clear()
+        self._reconcile_keys.clear()
         self._baseline_session = None
         self._notification_publish_pending = False
         await self._cleanup_resources(
@@ -400,18 +428,12 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 )
 
     # ------------------------------------------------------------ writes
-    async def async_set_property(
-        self,
-        siid: int,
-        piid: int,
-        value: int | bool,
-        *,
-        u32: bool = False,
-    ) -> None:
-        """Write a MIOT property under the same lock as polling.
+    @asynccontextmanager
+    async def _connected_for_write(self) -> AsyncIterator[tuple[MiSession, BleakClient, int]]:
+        """Own the lock, ensure a logged-in session, and map write failures.
 
-        Triggers an immediate refresh so entity state reflects the write
-        before HA services return.
+        Every public write helper runs inside this context so connection
+        setup, error translation, and teardown stay identical across them.
         """
         async with self._lock:
             try:
@@ -420,14 +442,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 generation = self._connection_generation
                 if client is None:
                     raise UpdateFailed("BLE connection disappeared before set")
-                await set_property(session, siid, piid, value, u32=u32)
-                if (
-                    self._connection_generation != generation
-                    or self._session is not session
-                    or self._client is not client
-                    or not client.is_connected
-                ):
-                    raise UpdateFailed("BLE connection changed during set")
+                yield session, client, generation
             except UpdateFailed:
                 await self._disconnect()
                 raise
@@ -441,17 +456,263 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 raise UpdateFailed(f"BLE error on set: {exc}") from exc
             except Exception as exc:
                 await self._disconnect()
-                raise UpdateFailed(f"set_property failed: {exc}") from exc
-            if self._client is not None:
-                # Explicit user activity extends the lease. Scheduled polling
-                # deliberately does not, otherwise a short poll interval keeps
-                # the one-peer BLE connection forever.
-                self._arm_idle_release(self._client)
-        # Use async_refresh (immediate) rather than async_request_refresh
-        # (debounced) so entity state mirrors the write before the service
-        # call returns to the HA client.
-        await asyncio.sleep(0.25)
-        await self.async_refresh()
+                raise UpdateFailed(f"set failed: {exc}") from exc
+
+    def _require_stable_connection(
+        self, session: MiSession, client: BleakClient, generation: int
+    ) -> None:
+        """Reject a write whose connection died or was replaced mid-flight."""
+        if (
+            self._connection_generation != generation
+            or self._session is not session
+            or self._client is not client
+            or not client.is_connected
+        ):
+            raise UpdateFailed("BLE connection changed during set")
+
+    async def _async_confirm_write(
+        self,
+        session: MiSession,
+        siid: int,
+        piid: int,
+        value: int | bool,
+        *,
+        u32: bool = False,
+    ) -> None:
+        """Send one set and require a successful set-properties response.
+
+        The response status is the device's confirmation — the same feedback
+        the Mi Home plugin waits for. A response timeout (its native error -3)
+        is retried exactly once after a short pause; anything else surfaces
+        immediately so HA can report the failure and keep the old state.
+        """
+        try:
+            await set_property(
+                session,
+                siid,
+                piid,
+                value,
+                u32=u32,
+                timeout=WRITE_CONFIRM_TIMEOUT,
+            )
+            return
+        except MiSessionTimeout:
+            _LOGGER.debug(
+                "set (siid=%s, piid=0x%02x) response timed out; retrying once",
+                siid,
+                piid,
+            )
+        await asyncio.sleep(WRITE_RETRY_DELAY)
+        await set_property(
+            session,
+            siid,
+            piid,
+            value,
+            u32=u32,
+            timeout=WRITE_CONFIRM_TIMEOUT,
+        )
+
+    def _optimistic_property_value(
+        self,
+        siid: int,
+        piid: int,
+        value: int | bool,
+        *,
+        u32: bool = False,
+    ) -> PropertyValue:
+        """Build the PropertyValue a successful write should look like.
+
+        The type/marker pair is copied from the last device-reported value so
+        later echoes and polls compare equal (the charger reports some toggles
+        as proper bools even though Mi Home writes them as u8). Without a
+        prior reading, fall back to the wire encoding of our own request.
+        """
+        prior = self._property_values.get((siid, piid))
+        if prior is not None:
+            coerced = bool(value) if isinstance(prior.value, bool) else int(value)
+            return PropertyValue(siid, piid, 0, prior.type_byte, prior.marker, coerced)
+        if isinstance(value, bool):
+            return PropertyValue(siid, piid, 0, 0x01, 0x00, value)
+        if u32:
+            return PropertyValue(siid, piid, 0, 0x04, 0x50, int(value))
+        return PropertyValue(siid, piid, 0, 0x01, 0x10, int(value))
+
+    def _apply_write_feedback(self, session: MiSession, item: PropertyValue) -> None:
+        """Merge a confirmed write optimistically and publish immediately.
+
+        Equivalent to the plugin's optimistic setState: entities flip as soon
+        as the charger accepts the write. The device's property-changed echo
+        stays authoritative — when it lands with the same value nothing is
+        republished; when it disagrees the push wins.
+        """
+        key = item.key
+        self._pending_notification_values.pop(key, None)
+        changed = self._property_values.get(key) != item
+        self._property_values[key] = item
+        if not changed or self._baseline_session is not session:
+            return
+        self.async_set_updated_data(_build_snapshot(self._property_values))
+
+    def _schedule_write_reconcile(self, *keys: tuple[int, int]) -> None:
+        """Defer one bounded re-read of written properties (~3 s debounce).
+
+        Mirrors the plugin's startPortDelayInfoTimer: a single delayed read
+        covers rapid successive toggles, never blocks the caller, and only
+        asks for the properties that were actually written.
+        """
+        self._reconcile_keys.update(keys)
+        if self._reconcile_task is not None and not self._reconcile_task.done():
+            self._reconcile_task.cancel()
+        self._reconcile_task = self.hass.async_create_background_task(
+            self._reconcile_written_properties(),
+            name=f"ad1204u_write_reconcile_{self.address}",
+        )
+
+    async def _reconcile_written_properties(self) -> None:
+        """Re-read recently written properties once pushes have settled."""
+        try:
+            await asyncio.sleep(WRITE_RECONCILE_DELAY)
+            keys = frozenset(self._reconcile_keys)
+            self._reconcile_keys.clear()
+            if not keys or self._shutdown_requested:
+                return
+            async with self._lock:
+                session = self._session
+                client = self._client
+                if (
+                    session is None
+                    or client is None
+                    or not client.is_connected
+                    or self._baseline_session is not session
+                ):
+                    return
+                try:
+                    values = await get_properties(
+                        session, tuples=tuple(sorted(keys))
+                    )
+                except Exception:  # noqa: BLE001
+                    # Best effort only: pushes plus the scheduled poll still
+                    # converge the state. Never fail the write that scheduled
+                    # this read or tear down the link over it.
+                    _LOGGER.debug(
+                        "%s post-write reconcile read failed", self.address,
+                        exc_info=True,
+                    )
+                    return
+                changed = False
+                for key, item in values.items():
+                    if self._property_values.get(key) != item:
+                        self._property_values[key] = item
+                        changed = True
+                if changed and self._baseline_session is session:
+                    self.async_set_updated_data(_build_snapshot(self._property_values))
+        finally:
+            if self._reconcile_task is asyncio.current_task():
+                self._reconcile_task = None
+
+    async def async_set_property(
+        self,
+        siid: int,
+        piid: int,
+        value: int | bool,
+        *,
+        u32: bool = False,
+    ) -> None:
+        """Write one MIOT property using app-style write feedback.
+
+        Confirms via the set-properties response, applies the value
+        optimistically, and lets the charger's echo push plus one debounced
+        re-read converge the rest. No blocking refresh runs inline — the old
+        settle-delay + full-poll tail raced the echo, timed out on slow links,
+        and still returned success to HA.
+        """
+        async with self._connected_for_write() as (session, client, generation):
+            await self._async_confirm_write(session, siid, piid, value, u32=u32)
+            self._require_stable_connection(session, client, generation)
+            item = self._optimistic_property_value(siid, piid, value, u32=u32)
+            self._apply_write_feedback(session, item)
+            # Explicit user activity extends the lease. Scheduled polling
+            # deliberately does not, otherwise a short poll interval keeps
+            # the one-peer BLE connection forever.
+            self._arm_idle_release(client)
+            self._schedule_write_reconcile(item.key)
+
+    async def async_set_protocol_switch(
+        self, port: str, switch: str, enabled: bool
+    ) -> None:
+        """Read-modify-write PIID 21 (protocol_ctl_extend) to toggle one bit.
+
+        Bit layout (confirmed in cuktech-ble-server state.py, aligned with the
+        Mi Home app's parseProtocolExtend):
+
+            c1: pd=bit0, pps=bit1, ufcs=bit2, reserved=bit3 (always 1)
+            c2: pd=bit8, pps=bit9, ufcs=bit10, reserved=bit11 (always 1)
+            c3: ufcs=bit16, scp=bit17
+            a:  ufcs=bit24, scp=bit25
+
+        The reserved bit on C1/C2 is fixed to 1 by the firmware, so the
+        encode helper always re-asserts it.
+        """
+        from .lib.protocol_switches import (
+            encode_protocol_extend,
+            parse_protocol_switches,
+        )
+
+        async with self._connected_for_write() as (session, client, generation):
+            # Read the current u32 so we can modify a single bit atomically.
+            current = self._property_values.get((2, 0x15))
+            current_value = current.value if current is not None else 0
+            switches = parse_protocol_switches(int(current_value))
+            port_switches = switches.get(port, {})
+            if switch not in port_switches and switch != "pd":
+                raise ValueError(
+                    f"port {port!r} does not have a {switch!r} switch"
+                )
+            # Only PD/PPS/UFCS/SCP are user-toggleable; the reserved bit
+            # is re-asserted by encode_protocol_extend.
+            if switch in ("pd", "pps", "ufcs", "scp"):
+                port_switches[switch] = enabled
+            switches[port] = port_switches
+            new_value = encode_protocol_extend(switches)
+            await self._async_confirm_write(session, 2, 0x15, new_value, u32=True)
+            self._require_stable_connection(session, client, generation)
+            item = self._optimistic_property_value(2, 0x15, new_value, u32=True)
+            self._apply_write_feedback(session, item)
+            self._arm_idle_release(client)
+            self._schedule_write_reconcile(item.key)
+
+    async def async_set_port_enabled(self, port: str, enabled: bool) -> None:
+        """Read-modify-write PIID 16 (port_ctl) to toggle one port's enable bit.
+
+        Bit layout: bit0=C1, bit1=C2, bit2=C3, bit3=A (1=enabled, 0=disabled).
+
+        The bit index is ``piid - 1`` (c1=piid1→bit0, ..., a=piid4→bit3),
+        matching the reference implementation in cuktech-ble-server
+        (``1 << (piid - 1)``) and cuktech-ble-controller
+        (``PORT_BITS = {'c1': 0, 'c2': 1, 'c3': 2, 'a': 3}``). Using the raw
+        piid as the bit index was an off-by-one that toggled the *neighbour*
+        port (c1→c2's bit, ..., a→bit4 outside the 4-bit mask).
+        """
+        from .lib.ports import PORT_PROPERTY_PIID
+
+        piid = PORT_PROPERTY_PIID.get(port)
+        if piid is None:
+            raise ValueError(f"unknown port {port!r}")
+        bit_index = piid - 1
+
+        async with self._connected_for_write() as (session, client, generation):
+            current = self._property_values.get((2, 0x10))
+            current_value = current.value if current is not None else 0x0F
+            if enabled:
+                new_value = int(current_value) | (1 << bit_index)
+            else:
+                new_value = int(current_value) & ~(1 << bit_index)
+            await self._async_confirm_write(session, 2, 0x10, new_value)
+            self._require_stable_connection(session, client, generation)
+            item = self._optimistic_property_value(2, 0x10, new_value)
+            self._apply_write_feedback(session, item)
+            self._arm_idle_release(client)
+            self._schedule_write_reconcile(item.key)
 
     # ----------------------------------------------------------- polling
     async def _async_update_data(self) -> AD1204UData:

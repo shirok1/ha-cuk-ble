@@ -19,6 +19,11 @@ PORTS: tuple[str, ...] = ("c1", "c2", "c3", "a")
 PORT_PROPERTY_PIID: dict[str, int] = {"c1": 1, "c2": 2, "c3": 3, "a": 4}
 PIID_TO_PORT: dict[int, str] = {v: k for k, v in PORT_PROPERTY_PIID.items()}
 
+# PIID 16 (port_ctl) u8 bitmap: bit index = piid - 1.
+# Matches cuktech-ble-server (`1 << (piid - 1)` / `{1:1<<0, 2:1<<1, 3:1<<2, 4:1<<3}`)
+# and cuktech-ble-controller (`PORT_BITS = {'c1': 0, 'c2': 1, 'c3': 2, 'a': 3}`).
+PORT_CTL_BIT: dict[str, int] = {"c1": 0, "c2": 1, "c3": 2, "a": 3}
+
 # b1 protocol-code map for ACTIVE ports. The authoritative idle indicator is
 # b0 (in_use); decode_port_info forces protocol_name="idle" whenever in_use is
 # false, regardless of b1. Codes 0x01/0x03/0x05/0x06/0x30 were previously
