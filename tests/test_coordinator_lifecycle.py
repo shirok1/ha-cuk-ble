@@ -1327,3 +1327,72 @@ def test_protocol_gate_write_without_prior_reading_assumes_all_on(
         reconcile_task.cancel()
 
     asyncio.run(run())
+
+
+
+
+def test_push_only_delay_values_survive_reconciliation(monkeypatch) -> None:
+    """Piids 2.8-2.12 are never polled; pushed values persist across refreshes."""
+
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+
+        bulk_values: dict = {}
+
+        async def fake_get_properties(session, tuples=None, *, seq=None):
+            return dict(bulk_values)
+
+        monkeypatch.setattr(
+            coordinator_module, "get_properties", fake_get_properties
+        )
+        # The charger pushes an armed C1 countdown (120 min) plus the bitmap.
+        coordinator._handle_notification(
+            session,
+            bytes.fromhex(
+                "0f 20 01 00 04 02"
+                "02 08 00 01 10 01"
+                "02 09 00 04 50 78 00 00 00"
+            ),
+        )
+        assert (2, 9) in coordinator._property_values
+
+        data = await coordinator._async_update_data()
+        assert data.delay_minutes["c1"] == 120
+        assert data.delay_bitmap == 1
+
+        # A later reconcile must NOT drop the pushed values even though the
+        # bulk read never asks for piids 2.8-2.12.
+        data = await coordinator._async_update_data()
+        assert data.delay_minutes["c1"] == 120
+        assert data.delay_bitmap == 1
+
+        # Disconnect clears the carried state with everything else.
+        await coordinator._disconnect()
+        assert (2, 9) not in coordinator._property_values
+
+    asyncio.run(run())
+
+
+def test_build_snapshot_decodes_delay_minutes_and_bitmap() -> None:
+    property_value = coordinator_module.PropertyValue
+    values = {
+        (2, 8): property_value(2, 8, 0, 0x01, 0x10, 0b0101),
+        (2, 9): property_value(2, 9, 0, 0x04, 0x50, 90),
+        (2, 12): property_value(2, 12, 0, 0x04, 0x50, 0),
+    }
+
+    data = coordinator_module._build_snapshot(values)
+
+    assert data.delay_bitmap == 0b0101
+    assert data.delay_minutes == {
+        "c1": 90,
+        "c2": None,
+        "c3": None,
+        "a": 0,
+    }

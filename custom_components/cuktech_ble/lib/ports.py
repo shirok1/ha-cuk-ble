@@ -29,6 +29,15 @@ PORT_CTL_BIT: dict[str, int] = {"c1": 0, "c2": 1, "c3": 2, "a": 3}
 # slot (the plugin merges the two port cards while it lasts).
 STATUS_C3A_MERGED = 0x11
 
+# Delayed power-off (Mi Home "Delay Poweroff"): piid 8 is a u8 bitmap with
+# bit N set while port N has an armed timer (bit0=C1 .. bit3=A); piids 9-12
+# hold the remaining **minutes** per port (startH = v // 60, startM = v % 60).
+# The plugin always writes piid 8 together with the matching 9-12 entry in
+# one transaction and ignores its own read-back of the bitmap.
+PORT_DELAY_PIID: dict[str, int] = {"c1": 9, "c2": 10, "c3": 11, "a": 12}
+DELAY_PIID_TO_PORT: dict[int, str] = {v: k for k, v in PORT_DELAY_PIID.items()}
+DELAY_BITMAP_PIID = 0x08
+
 # b1 protocol-code map for ACTIVE ports. The authoritative idle indicator is
 # b0 (in_use); decode_port_info forces protocol_name="idle" whenever in_use is
 # false, regardless of b1. Codes 0x01/0x03/0x05/0x06/0x30 were previously

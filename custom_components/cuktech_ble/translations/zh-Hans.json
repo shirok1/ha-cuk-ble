@@ -137,6 +137,9 @@
                     "pps": "PPS",
                     "ufcs": "UFCS"
                 }
+            },
+            "delay_poweroff": {
+                "name": "延时关闭剩余时间"
             }
         },
         "switch": {

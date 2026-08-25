@@ -17,6 +17,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfPower,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -24,7 +25,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .lib.ports import PORTS
 
 from . import AD1204UConfigEntry
-from .coordinator import AD1204UData
+from .coordinator import AD1204UCoordinator, AD1204UData
 from .entity import AD1204UEntity
 
 
@@ -176,7 +177,18 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(AD1204USensor(coordinator, desc) for desc in SENSORS)
+    async_add_entities(
+        [
+            *(
+                AD1204USensor(coordinator, desc)
+                for desc in SENSORS
+            ),
+            *(
+                AD1204UDelayPowerOffSensor(coordinator, port=port)
+                for port in PORTS
+            ),
+        ]
+    )
 
 
 class AD1204USensor(AD1204UEntity, SensorEntity):
@@ -192,3 +204,37 @@ class AD1204USensor(AD1204UEntity, SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class AD1204UDelayPowerOffSensor(AD1204UEntity, SensorEntity):
+    """Remaining delayed power-off minutes for one port (push-driven only).
+
+    The charger reports piids 2.9-2.12 spontaneously; the coordinator never
+    polls them and there is deliberately no write path — this sensor simply
+    mirrors what the device pushes. It stays unavailable until the first
+    push arrives.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "delay_poweroff"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: AD1204UCoordinator, *, port: str) -> None:
+        super().__init__(coordinator, port=port)
+        self._port = port
+        self._attr_unique_id = f"{coordinator.address}_{port}_delay_poweroff"
+
+    @property
+    def native_value(self) -> int | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return data.delay_minutes.get(self._port)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        data = self.coordinator.data
+        if data is None or data.delay_bitmap is None:
+            return None
+        return {"armed_ports_bitmap": f"0b{data.delay_bitmap:04b}"}

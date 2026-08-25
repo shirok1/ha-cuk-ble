@@ -137,6 +137,9 @@
                     "pps": "PPS",
                     "ufcs": "UFCS"
                 }
+            },
+            "delay_poweroff": {
+                "name": "Delay power-off"
             }
         },
         "switch": {

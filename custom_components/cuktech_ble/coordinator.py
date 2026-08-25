@@ -47,6 +47,8 @@ from .const import (
 )
 from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .lib.ports import (
+    DELAY_BITMAP_PIID,
+    DELAY_PIID_TO_PORT,
     PIID_TO_PORT,
     PORTS,
     PortInfo,
@@ -75,6 +77,14 @@ _LOGGER = logging.getLogger(__name__)
 FACTORY_RESET_SIID = 2
 FACTORY_RESET_AIID = 1
 
+# Delayed power-off telemetry (piids 2.8-2.12) is deliberately never polled:
+# the charger pushes countdown changes on its own, so values that arrive as
+# property events are carried across reconciliation refreshes until the next
+# push or a disconnect. Nothing here writes them.
+PUSH_ONLY_PROPERTY_KEYS: frozenset[tuple[int, int]] = frozenset(
+    ((2, DELAY_BITMAP_PIID), *((2, piid) for piid in DELAY_PIID_TO_PORT))
+)
+
 
 @dataclass
 class AD1204UData:
@@ -84,6 +94,8 @@ class AD1204UData:
     total_power_w: float = 0.0
     pdo_caps_w: dict[str, int | None] = field(default_factory=dict)
     negotiated_protocol: dict[str, str | None] = field(default_factory=dict)
+    delay_minutes: dict[str, int | None] = field(default_factory=dict)
+    delay_bitmap: int | None = None
     scene_mode: int | None = None
     screen_save_time: int | None = None
     device_language: int | None = None
@@ -783,6 +795,15 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                     raise UpdateFailed("BLE connection changed during refresh")
                 values.update(self._pending_notification_values)
                 self._pending_notification_values.clear()
+                # Keep push-only telemetry (delay power-off) alive across
+                # reconciles: the bulk read never asks for those piids, so
+                # without this merge the next poll would drop the values.
+                values.update({
+                    key: item
+                    for key, item in self._property_values.items()
+                    if key in PUSH_ONLY_PROPERTY_KEYS
+                    and key not in values
+                })
                 self._property_values = values
                 self._baseline_session = session
             except UpdateFailed:
@@ -904,11 +925,18 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         )
 
     total = round(sum(info.power_w for info in ports.values()), 2)
+    delay_minutes = {p: None for p in PORTS}
+    for piid, port in DELAY_PIID_TO_PORT.items():
+        item = values.get((2, piid))
+        if item is not None:
+            delay_minutes[port] = int(item.value)
     return AD1204UData(
         ports=ports,
         total_power_w=total,
         pdo_caps_w=pdo,
         negotiated_protocol=negotiated,
+        delay_minutes=delay_minutes,
+        delay_bitmap=_u8(DELAY_BITMAP_PIID),
         scene_mode=_u8(5),
         screen_save_time=_u8(6),
         port_ctl=_u8(0x10),
