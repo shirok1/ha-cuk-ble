@@ -900,11 +900,7 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
             continue
         ports[port] = decode_port_info(port, item.value)
 
-    def _u32(piid: int) -> int | None:
-        item = values.get((2, piid))
-        return None if item is None else int(item.value)
-
-    def _u8(piid: int) -> int | None:
+    def _int(piid: int) -> int | None:
         item = values.get((2, piid))
         return None if item is None else int(item.value)
 
@@ -914,13 +910,13 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
 
     pdo: dict[str, int | None] = {p: None for p in PORTS}
     negotiated: dict[str, str | None] = {p: None for p in PORTS}
-    c1c2 = _u32(0x11)
+    c1c2 = _int(0x11)
     if c1c2 is not None:
         pdo.update(decode_pdo_caps(c1c2, high_port="c1", low_port="c2"))
         negotiated.update(
             decode_negotiated_protocol(c1c2, high_port="c1", low_port="c2")
         )
-    c3a = _u32(0x12)
+    c3a = _int(0x12)
     if c3a is not None:
         pdo.update(decode_pdo_caps(c3a, high_port="c3", low_port="a"))
         negotiated.update(
@@ -939,13 +935,13 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         pdo_caps_w=pdo,
         negotiated_protocol=negotiated,
         delay_minutes=delay_minutes,
-        delay_bitmap=_u8(DELAY_BITMAP_PIID),
-        scene_mode=_u8(5),
-        screen_save_time=_u8(6),
-        port_ctl=_u8(0x10),
-        protocol_ctl=_u8(0x07),
-        protocol_ctl_extend=_u32(0x15),
-        device_language=_u8(0x0d),
+        delay_bitmap=_int(DELAY_BITMAP_PIID),
+        scene_mode=_int(5),
+        screen_save_time=_int(6),
+        port_ctl=_int(0x10),
+        protocol_ctl=_int(0x07),
+        protocol_ctl_extend=_int(0x15),
+        device_language=_int(0x0d),
         usb_a_always_on=_bool(0x0f),
         screenoff_while_idle=_bool(0x13),
         screen_dir_lock=_bool(0x14),
