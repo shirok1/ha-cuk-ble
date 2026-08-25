@@ -121,6 +121,19 @@
             },
             "total_power": {
                 "name": "总功率"
+            },
+            "negotiated_protocol": {
+                "name": "协商协议",
+                "state": {
+                    "5v": "5V",
+                    "qc": "QC",
+                    "afc": "AFC",
+                    "fcp": "FCP",
+                    "scp": "SCP",
+                    "pd": "PD",
+                    "pps": "PPS",
+                    "ufcs": "UFCS"
+                }
             }
         },
         "switch": {

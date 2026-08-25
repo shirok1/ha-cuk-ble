@@ -66,3 +66,46 @@ def test_port_ctl_bit_mapping_matches_reference_repos() -> None:
     # write path must satisfy to stay consistent with the read path (is_on).
     for port, piid in PORT_PROPERTY_PIID.items():
         assert PORT_CTL_BIT[port] == piid - 1
+
+
+def test_decode_negotiated_protocol_official_labels() -> None:
+    """Kind bytes map to the plugin's getC1C2ProtocolStr labels."""
+    from cuktech_ble.ports import NEGOTIATED_PROTOCOL_BY_KIND
+
+    assert NEGOTIATED_PROTOCOL_BY_KIND == {
+        0x01: "5v",
+        0x02: "5v",
+        0x03: "qc",
+        0x04: "afc",
+        0x05: "fcp",
+        0x06: "scp",
+        0x07: "pd",
+        0x08: "pps",
+        0x09: "pps",
+        0x0A: "ufcs",
+    }
+
+
+def test_decode_negotiated_protocol_halves() -> None:
+    from cuktech_ble.ports import decode_negotiated_protocol
+
+    # C1 fixed PD 45W + C2 PPS 55W in one word (high16=C1, low16=C2).
+    value = (0x07 << 24) | (45 << 16) | (0x08 << 8) | 55
+    assert decode_negotiated_protocol(value, high_port="c1", low_port="c2") == {
+        "c1": "pd",
+        "c2": "pps",
+    }
+
+    # Zero low byte = no contract for that port.
+    value = (0x0A << 24) | (100 << 16)
+    assert decode_negotiated_protocol(value, high_port="c3", low_port="a") == {
+        "c3": "ufcs",
+        "a": None,
+    }
+
+    # Unknown kind byte → label None while the port still has a contract.
+    value = (0x63 << 24) | (60 << 16)
+    assert decode_negotiated_protocol(value, high_port="c1", low_port="c2") == {
+        "c1": None,
+        "c2": None,
+    }

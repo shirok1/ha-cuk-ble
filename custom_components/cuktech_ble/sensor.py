@@ -73,6 +73,21 @@ def _port_cap(port: str) -> Callable[[AD1204UData], int | None]:
     return _get
 
 
+# Official protocol-id labels for piid 17/18 kind bytes (getC1C2ProtocolStr).
+NEGOTIATED_PROTOCOL_OPTIONS = (
+    "5v", "qc", "afc", "fcp", "scp", "pd", "pps", "ufcs",
+)
+
+
+def _negotiated_protocol(port: str) -> Callable[[AD1204UData], str | None]:
+    def _get(data: AD1204UData) -> str | None:
+        label = data.negotiated_protocol.get(port)
+        if label is None or label not in NEGOTIATED_PROTOCOL_OPTIONS:
+            return None
+        return label
+    return _get
+
+
 def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
     out: list[AD1204USensorDescription] = []
     for port in PORTS:
@@ -125,6 +140,15 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
                     entity_category=EntityCategory.DIAGNOSTIC,
                     entity_registry_enabled_default=False,
                     value_fn=_port_cap(port),
+                    port=port,
+                ),
+                AD1204USensorDescription(
+                    key=f"{port}_negotiated_protocol",
+                    translation_key="negotiated_protocol",
+                    device_class=SensorDeviceClass.ENUM,
+                    options=list(NEGOTIATED_PROTOCOL_OPTIONS),
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    value_fn=_negotiated_protocol(port),
                     port=port,
                 ),
             ]

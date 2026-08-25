@@ -121,6 +121,19 @@
             },
             "total_power": {
                 "name": "Total power"
+            },
+            "negotiated_protocol": {
+                "name": "Negotiated protocol",
+                "state": {
+                    "5v": "5V",
+                    "qc": "QC",
+                    "afc": "AFC",
+                    "fcp": "FCP",
+                    "scp": "SCP",
+                    "pd": "PD",
+                    "pps": "PPS",
+                    "ufcs": "UFCS"
+                }
             }
         },
         "switch": {

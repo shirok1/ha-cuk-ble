@@ -51,6 +51,7 @@ from .lib.ports import (
     PORTS,
     PortInfo,
     decode_pdo_caps,
+    decode_negotiated_protocol,
     decode_port_info,
 )
 from .lib.protocol_switches import update_protocol_switch
@@ -82,6 +83,7 @@ class AD1204UData:
     ports: dict[str, PortInfo] = field(default_factory=dict)
     total_power_w: float = 0.0
     pdo_caps_w: dict[str, int | None] = field(default_factory=dict)
+    negotiated_protocol: dict[str, str | None] = field(default_factory=dict)
     scene_mode: int | None = None
     screen_save_time: int | None = None
     device_language: int | None = None
@@ -887,18 +889,26 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         return None if item is None else bool(item.value)
 
     pdo: dict[str, int | None] = {p: None for p in PORTS}
+    negotiated: dict[str, str | None] = {p: None for p in PORTS}
     c1c2 = _u32(0x11)
     if c1c2 is not None:
         pdo.update(decode_pdo_caps(c1c2, high_port="c1", low_port="c2"))
+        negotiated.update(
+            decode_negotiated_protocol(c1c2, high_port="c1", low_port="c2")
+        )
     c3a = _u32(0x12)
     if c3a is not None:
         pdo.update(decode_pdo_caps(c3a, high_port="c3", low_port="a"))
+        negotiated.update(
+            decode_negotiated_protocol(c3a, high_port="c3", low_port="a")
+        )
 
     total = round(sum(info.power_w for info in ports.values()), 2)
     return AD1204UData(
         ports=ports,
         total_power_w=total,
         pdo_caps_w=pdo,
+        negotiated_protocol=negotiated,
         scene_mode=_u8(5),
         screen_save_time=_u8(6),
         port_ctl=_u8(0x10),

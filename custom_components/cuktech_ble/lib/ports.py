@@ -127,6 +127,47 @@ PDO_KIND_BY_HIGH_BYTE: dict[int, str] = {
 }
 
 
+# Official protocol-id labels for the same high byte, verbatim from the Mi
+# Home plugin's getC1C2ProtocolStr (njcuk.fitting.ad1204.js 5527-5574).
+# The app renders these strings from piid 17/18 kind bytes on the main page;
+# the live b1 byte inside piids 1-4 is only ever checked against zero.
+# Lowercase here to fit an HA enum sensor's option naming.
+NEGOTIATED_PROTOCOL_BY_KIND: dict[int, str] = {
+    0x01: "5v",
+    0x02: "5v",
+    0x03: "qc",
+    0x04: "afc",
+    0x05: "fcp",
+    0x06: "scp",
+    0x07: "pd",
+    0x08: "pps",
+    0x09: "pps",
+    0x0A: "ufcs",
+}
+
+
+def decode_negotiated_protocol(
+    value: int, *, high_port: str, low_port: str
+) -> dict[str, str | None]:
+    """Map each half's kind byte to the official protocol label.
+
+    A zero low byte still means "no contract" — the label is ``None`` so the
+    sensor can sit at unavailable instead of a fake state.
+    """
+    low_half = value & 0xFFFF
+    high_half = (value >> 16) & 0xFFFF
+
+    def _label(half: int) -> str | None:
+        if (half & 0xFF) == 0:
+            return None
+        return NEGOTIATED_PROTOCOL_BY_KIND.get((half >> 8) & 0xFF)
+
+    return {
+        low_port: _label(low_half),
+        high_port: _label(high_half),
+    }
+
+
 def decode_pdo_caps(value: int, *, high_port: str, low_port: str) -> dict[str, int | None]:
     """Extract negotiated watt caps for the two ports sharing this u32 word."""
     low_half = value & 0xFFFF
