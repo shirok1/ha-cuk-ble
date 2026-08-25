@@ -87,6 +87,9 @@
         "binary_sensor": {
             "port_in_use": {
                 "name": "In use"
+            },
+            "c3_a_merged": {
+                "name": "C3&A merged output"
             }
         },
         "button": {

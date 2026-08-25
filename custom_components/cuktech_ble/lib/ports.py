@@ -24,6 +24,11 @@ PIID_TO_PORT: dict[int, str] = {v: k for k, v in PORT_PROPERTY_PIID.items()}
 # and cuktech-ble-controller (`PORT_BITS = {'c1': 0, 'c2': 1, 'c3': 2, 'a': 3}`).
 PORT_CTL_BIT: dict[str, int] = {"c1": 0, "c2": 1, "c3": 2, "a": 3}
 
+# Special status-byte values (b0), per the Mi Home plugin: 1 marks an active
+# port, and 0x11 on C3 means C3 and USB-A are operating as one merged output
+# slot (the plugin merges the two port cards while it lasts).
+STATUS_C3A_MERGED = 0x11
+
 # b1 protocol-code map for ACTIVE ports. The authoritative idle indicator is
 # b0 (in_use); decode_port_info forces protocol_name="idle" whenever in_use is
 # false, regardless of b1. Codes 0x01/0x03/0x05/0x06/0x30 were previously
@@ -58,6 +63,7 @@ class PortInfo:
     voltage_v: float
     current_a: float
     power_w: float
+    status_byte: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +75,7 @@ class PortInfo:
             "voltage_v": self.voltage_v,
             "current_a": self.current_a,
             "power_w": self.power_w,
+            "status_byte": self.status_byte,
         }
 
 
@@ -100,6 +107,7 @@ def decode_port_info(port: str, value: int) -> PortInfo:
         voltage_v=voltage,
         current_a=current,
         power_w=round(voltage * current, 2),
+        status_byte=b0,
     )
 
 

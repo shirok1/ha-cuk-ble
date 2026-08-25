@@ -109,3 +109,28 @@ def test_decode_negotiated_protocol_halves() -> None:
         "c1": None,
         "c2": None,
     }
+
+
+def test_decode_port_info_exposes_status_byte() -> None:
+    """The raw status byte stays available (0x11 = C3&A merged slot)."""
+    from cuktech_ble.ports import decode_port_info
+
+    merged = decode_port_info("c3", (0x11 << 0) | (0x60 << 8))
+    assert merged.status_byte == 0x11
+    assert merged.in_use is True
+
+    active = decode_port_info("c1", 0x01)
+    assert active.status_byte == 0x01
+    assert active.in_use is True
+
+    idle = decode_port_info("a", 0)
+    assert idle.status_byte == 0
+    assert idle.in_use is False
+
+
+def test_port_info_to_dict_includes_status_byte() -> None:
+    from cuktech_ble.ports import decode_port_info
+
+    info = decode_port_info("c3", (0x11 << 0) | (0x80 << 8) | (0x20 << 16))
+
+    assert info.to_dict()["status_byte"] == 0x11

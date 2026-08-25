@@ -10,10 +10,11 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .lib.ports import PORTS
+from .lib.ports import PORTS, STATUS_C3A_MERGED
 
 from . import AD1204UConfigEntry
 from .coordinator import AD1204UData
@@ -33,15 +34,31 @@ def _port_in_use(port: str) -> Callable[[AD1204UData], bool | None]:
     return _get
 
 
-BINARY_SENSORS: tuple[AD1204UBinarySensorDescription, ...] = tuple(
+def _c3a_merged(data: AD1204UData) -> bool | None:
+    """True while C3 reports the merged C3&A output slot (status 0x11)."""
+    info = data.ports.get("c3")
+    if info is None:
+        return None
+    return info.status_byte == STATUS_C3A_MERGED
+
+
+BINARY_SENSORS: tuple[AD1204UBinarySensorDescription, ...] = (
+    *(
+        AD1204UBinarySensorDescription(
+            key=f"{port}_in_use",
+            translation_key="port_in_use",
+            device_class=BinarySensorDeviceClass.POWER,
+            value_fn=_port_in_use(port),
+            port=port,
+        )
+        for port in PORTS
+    ),
     AD1204UBinarySensorDescription(
-        key=f"{port}_in_use",
-        translation_key="port_in_use",
-        device_class=BinarySensorDeviceClass.POWER,
-        value_fn=_port_in_use(port),
-        port=port,
-    )
-    for port in PORTS
+        key="c3_a_merged",
+        translation_key="c3_a_merged",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_c3a_merged,
+    ),
 )
 
 
