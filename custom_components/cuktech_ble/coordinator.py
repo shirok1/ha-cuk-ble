@@ -53,6 +53,7 @@ from .lib.ports import (
     decode_pdo_caps,
     decode_port_info,
 )
+from .lib.protocol_switches import update_protocol_switch
 from .lib.xiaomi import MiAuthClient
 from .lib.xiaomi.auth import MiAuthInvalidTokenError
 from .lib.xiaomi.properties import (
@@ -658,29 +659,15 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             a:  ufcs=bit24, scp=bit25
 
         The reserved bit on C1/C2 is fixed to 1 by the firmware, so the
-        encode helper always re-asserts it.
+        update helper always re-asserts it.
         """
-        from .lib.protocol_switches import (
-            encode_protocol_extend,
-            parse_protocol_switches,
-        )
-
         async with self._connected_for_write() as (session, client, generation):
             # Read the current u32 so we can modify a single bit atomically.
             current = self._property_values.get((2, 0x15))
             current_value = current.value if current is not None else 0
-            switches = parse_protocol_switches(int(current_value))
-            port_switches = switches.get(port, {})
-            if switch not in port_switches and switch != "pd":
-                raise ValueError(
-                    f"port {port!r} does not have a {switch!r} switch"
-                )
-            # Only PD/PPS/UFCS/SCP are user-toggleable; the reserved bit
-            # is re-asserted by encode_protocol_extend.
-            if switch in ("pd", "pps", "ufcs", "scp"):
-                port_switches[switch] = enabled
-            switches[port] = port_switches
-            new_value = encode_protocol_extend(switches)
+            new_value = update_protocol_switch(
+                int(current_value), port, switch, enabled
+            )
             await self._async_confirm_write(session, 2, 0x15, new_value, u32=True)
             self._require_stable_connection(session, client, generation)
             item = self._optimistic_property_value(2, 0x15, new_value, u32=True)

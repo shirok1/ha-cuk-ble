@@ -17,7 +17,7 @@ from . import AD1204UConfigEntry
 from .coordinator import AD1204UCoordinator, AD1204UData
 from .entity import AD1204UEntity
 from .lib.ports import PORTS, PORT_CTL_BIT
-from .lib.protocol_switches import parse_protocol_ctrl, parse_protocol_switches
+from .lib.protocol_switches import protocol_ctrl_enabled, protocol_switch_enabled
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,8 +86,7 @@ def _protocol_switch_getter(
     def _get(data: AD1204UData) -> bool | None:
         if data.protocol_ctl_extend is None:
             return None
-        switches = parse_protocol_switches(data.protocol_ctl_extend)
-        return switches.get(port, {}).get(switch)
+        return protocol_switch_enabled(data.protocol_ctl_extend, port, switch)
 
     return _get
 
@@ -102,7 +101,7 @@ def _protocol_gate_getter(gate: str) -> Callable[[AD1204UData], bool | None]:
     def _get(data: AD1204UData) -> bool | None:
         if data.protocol_ctl is None:
             return None
-        return parse_protocol_ctrl(data.protocol_ctl).get(gate)
+        return protocol_ctrl_enabled(data.protocol_ctl, gate)
 
     return _get
 

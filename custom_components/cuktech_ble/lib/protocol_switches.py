@@ -1,4 +1,4 @@
-"""PIID 21 (protocol_ctl_extend) bit layout and encode/decode helpers.
+"""PIID 21 and PIID 7 protocol-switch bit helpers.
 
 The u32 value packs per-port fast-charging protocol enable flags:
 
@@ -7,8 +7,8 @@ The u32 value packs per-port fast-charging protocol enable flags:
     c3: ufcs=bit16, scp=bit17
     a:  ufcs=bit24, scp=bit25
 
-The reserved bit on C1/C2 is firmware-fixed to 1; ``encode_protocol_extend``
-always re-asserts it so writes stay byte-identical to the Mi Home app.
+The reserved bit on C1/C2 is firmware-fixed to 1 and is re-asserted on writes
+so they stay byte-identical to the Mi Home app.
 
 Bit mappings confirmed in cuktech-ble-server ``state.py`` and aligned with
 the Mi Home app's ``parseProtocolExtend`` / ``setProtocolExtend``.
@@ -17,59 +17,30 @@ the Mi Home app's ``parseProtocolExtend`` / ``setProtocolExtend``.
 from __future__ import annotations
 
 PROTOCOL_SWITCH_BITS: dict[str, dict[str, int]] = {
-    "c1": {"pd": 0, "pps": 1, "ufcs": 2, "_reserved": 3},
-    "c2": {"pd": 8, "pps": 9, "ufcs": 10, "_reserved": 11},
+    "c1": {"pd": 0, "pps": 1, "ufcs": 2},
+    "c2": {"pd": 8, "pps": 9, "ufcs": 10},
     "c3": {"ufcs": 16, "scp": 17},
     "a": {"ufcs": 24, "scp": 25},
 }
+_RESERVED_BITS = (1 << 3) | (1 << 11)
 
 
-def parse_protocol_switches(value: int) -> dict[str, dict[str, bool]]:
-    """Decode a PIID 21 u32 into per-port switch states."""
-    result: dict[str, dict[str, bool]] = {}
-    for port, bits in PROTOCOL_SWITCH_BITS.items():
-        port_switches: dict[str, bool] = {}
-        for name, bit in bits.items():
-            if name == "_reserved":
-                continue
-            port_switches[name] = bool(value & (1 << bit))
-        result[port] = port_switches
-    return result
+def protocol_switch_enabled(value: int, port: str, name: str) -> bool:
+    """Return one named PIID 21 switch state."""
+    return bool(value & (1 << _protocol_switch_bit(port, name)))
 
 
-def _c1c2_flags(switches: dict[str, bool] | None) -> int:
-    """Encode the 4-bit flag word for C1 or C2 (reserved bit fixed to 1)."""
-    if not switches:
-        return 0
-    v = 0x08  # reserved bit always 1
-    if switches.get("pd"):
-        v |= 0x01
-    if switches.get("pps"):
-        v |= 0x02
-    if switches.get("ufcs"):
-        v |= 0x04
-    return v
+def update_protocol_switch(value: int, port: str, name: str, enabled: bool) -> int:
+    """Return PIID 21 with one named switch flipped and reserved bits set."""
+    bit = 1 << _protocol_switch_bit(port, name)
+    return ((value | bit) if enabled else (value & ~bit)) | _RESERVED_BITS
 
 
-def _c3a_flags(switches: dict[str, bool] | None) -> int:
-    """Encode the 2-bit flag word for C3 or A."""
-    if not switches:
-        return 0
-    v = 0
-    if switches.get("ufcs"):
-        v |= 0x01
-    if switches.get("scp"):
-        v |= 0x02
-    return v
-
-
-def encode_protocol_extend(switches: dict[str, dict[str, bool]]) -> int:
-    """Encode per-port switch states into a PIID 21 u32 value."""
-    c1 = _c1c2_flags(switches.get("c1"))
-    c2 = _c1c2_flags(switches.get("c2"))
-    c3 = _c3a_flags(switches.get("c3"))
-    a = _c3a_flags(switches.get("a"))
-    return (a << 24) | (c3 << 16) | (c2 << 8) | c1
+def _protocol_switch_bit(port: str, name: str) -> int:
+    try:
+        return PROTOCOL_SWITCH_BITS[port][name]
+    except KeyError:
+        raise ValueError(f"port {port!r} does not have a {name!r} switch") from None
 
 
 # ----- PIID 7 (protocol_ctrl) global gate bitmap ----------------------------
@@ -86,9 +57,13 @@ def encode_protocol_extend(switches: dict[str, dict[str, bool]]) -> int:
 PROTOCOL_CTRL_BITS: dict[str, int] = {"scp": 0, "mipps": 1, "ufcs": 2}
 
 
-def parse_protocol_ctrl(value: int) -> dict[str, bool]:
-    """Decode a PIID 7 u8 into named flag states."""
-    return {name: bool(value & (1 << bit)) for name, bit in PROTOCOL_CTRL_BITS.items()}
+def protocol_ctrl_enabled(value: int, name: str) -> bool:
+    """Return one named PIID 7 switch state."""
+    try:
+        bit = PROTOCOL_CTRL_BITS[name]
+    except KeyError:
+        raise ValueError(f"unknown protocol gate {name!r}") from None
+    return bool(value & (1 << bit))
 
 
 def update_protocol_ctrl(value: int, name: str, enabled: bool) -> int:
