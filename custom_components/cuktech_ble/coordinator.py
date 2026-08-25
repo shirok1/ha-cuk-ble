@@ -605,12 +605,20 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                     return
                 try:
                     values = await get_properties(
-                        session, tuples=tuple(sorted(keys))
+                        session,
+                        tuples=tuple(sorted(keys)),
+                        timeout=WRITE_CONFIRM_TIMEOUT,
                     )
+                except MiSessionTimeout:
+                    _LOGGER.debug(
+                        "%s post-write reconcile timed out; reconnecting",
+                        self.address,
+                    )
+                    await self._disconnect()
+                    return
                 except Exception:  # noqa: BLE001
-                    # Best effort only: pushes plus the scheduled poll still
-                    # converge the state. Never fail the write that scheduled
-                    # this read or tear down the link over it.
+                    # Best effort only: the scheduled poll can still converge
+                    # state after a non-transport reconciliation failure.
                     _LOGGER.debug(
                         "%s post-write reconcile read failed", self.address,
                         exc_info=True,

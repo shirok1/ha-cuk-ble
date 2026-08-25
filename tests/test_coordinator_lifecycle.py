@@ -944,14 +944,18 @@ def test_write_reconcile_reads_back_written_properties(monkeypatch) -> None:
         assert coordinator._reconcile_task is not None
         await asyncio.wait_for(coordinator._reconcile_task, timeout=1)
 
-        get_properties.assert_awaited_once_with(session, tuples=((2, 5),))
+        get_properties.assert_awaited_once_with(
+            session,
+            tuples=((2, 5),),
+            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+        )
         assert len(published) == 2
         assert published[-1].scene_mode == 3
 
     asyncio.run(run())
 
 
-def test_write_reconcile_failure_is_silent(monkeypatch) -> None:
+def test_write_reconcile_timeout_disconnects_dead_session(monkeypatch) -> None:
     async def run() -> None:
         monkeypatch.setattr(coordinator_module, "WRITE_RECONCILE_DELAY", 0.01)
         coordinator = _make_coordinator(idle_release=300)
@@ -975,10 +979,15 @@ def test_write_reconcile_failure_is_silent(monkeypatch) -> None:
         assert coordinator._reconcile_task is not None
         await asyncio.wait_for(coordinator._reconcile_task, timeout=1)
 
-        # A missed post-write re-read must not fail the write again, drop
-        # the connection, or mark the coordinator unavailable.
-        get_properties.assert_awaited_once()
-        assert coordinator._client is client
+        # The write remains successful, but the timed-out session must not be
+        # reused for another full-timeout poll.
+        get_properties.assert_awaited_once_with(
+            session,
+            tuples=((2, 5),),
+            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+        )
+        assert coordinator._client is None
+        assert client.disconnect_calls == 1
         coordinator.async_set_update_error.assert_not_called()
         assert coordinator.async_set_updated_data.call_count == 1
 

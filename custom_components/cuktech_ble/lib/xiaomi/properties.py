@@ -219,11 +219,12 @@ async def get_properties(
     tuples: tuple[tuple[int, int], ...] = DEFAULT_READ_TUPLES,
     *,
     seq: int | None = None,
+    timeout: float | None = None,
 ) -> dict[tuple[int, int], PropertyValue]:
     if seq is None:
         seq = session.next_sequence()
     request = encode_get_properties(seq, tuples)
-    response_pt = await session.send_request(request)
+    response_pt = await session.send_request(request, timeout=timeout)
     return {item.key: item for item in parse_response(response_pt)}
 
 
