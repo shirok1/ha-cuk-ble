@@ -94,8 +94,9 @@ def decode_port_info(port: str, value: int) -> PortInfo:
     if value < 0 or value > 0xFFFFFFFF:
         raise ValueError("value out of uint32 range")
     # b0 is a bitfield, not a strict flag: idle is always 0, but active ports
-    # have been seen reporting 0x01 and 0x11 on the same port at different
-    # times. Treat non-zero as active.
+    # have been seen reporting 0x01 and 0x11 on the same port
+    # at different times; 0x11 on C3 means the merged C3&A slot
+    # (STATUS_C3A_MERGED). Treat non-zero as active.
     b0 = value & 0xFF
     b1 = (value >> 8) & 0xFF
     b2 = (value >> 16) & 0xFF

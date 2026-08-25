@@ -30,17 +30,36 @@ Response:
 | 0x02 | port C2 info | u32 | per-port power word |
 | 0x03 | port C3 info | u32 | per-port power word |
 | 0x04 | port A info  | u32 | per-port power word |
-| 0x05 | scene_mode | u8 | |
-| 0x06 | screen_save_time | u8 | enum: `4`=1 min, `0`=5 min, `1`=10 min, `2`=30 min, `3`=always on |
-| 0x07 | protocol_ctl | u8 | |
-| 0x0d | device_language | u8 | |
-| 0x0f | usb_a_always_on | bool | |
-| 0x10 | port_ctl | u8 | bitmap — `0x0f` = all four ports enabled |
-| 0x11 | c1c2_protocol | u32 | low16 = C2, high16 = C1 |
-| 0x12 | c3a_protocol | u32 | low16 = A,  high16 = C3 |
+| 0x05 | scene_mode | u8 | enum `1`=AI, `2`=Hybrid, `3`=Single, `4`=Dual |
+| 0x06 | screen_save_time | u8 | **two encodings, see below** |
+| 0x07 | protocol_ctl | u8 | writable bitmap — bit0=SCP, bit1=MiPPS, bit2=UFCS (UFCS for C1/C2) |
+| 0x08 | delay_down_setting | u8 | bitmap piid `N` set while port N has an armed delayed power-off (bit0=C1..bit3=A) |
+| 0x09–0x0c | delay_time_c1..a | u32 | remaining **minutes** per port (push-only; we never poll them) |
+| 0x0d | device_language | u8 | `0`=English, `1`=Chinese |
+| 0x0e | enter | u8 | app-attach handshake: written `2` once per connection after login (never read) |
+| 0x0f | usb_a_always_on | bool | officially a 4-hour trickle mode |
+| 0x10 | port_ctl | u8 | bitmap — `0x0f` = all four ports enabled (bit0=C1..bit3=A) |
+| 0x11 | c1c2_protocol | u32 | negotiated kind+watt: high16=C1, low16=C2 (**read-only** — the app never writes them) |
+| 0x12 | c3a_protocol | u32 | negotiated kind+watt: high16=C3, low16=A (read-only) |
 | 0x13 | screenoff_while_idle | bool | |
 | 0x14 | screen_dir_lock | bool | |
-| 0x15 | protocol_ctl_extend | u32 | |
+| 0x15 | protocol_ctl_extend | u32 | per-port protocol toggles (see ports.py); reserved bit 3 forced on C1/C2 |
+
+### screen_save_time — two documented encodings
+
+The official Mi Home plugin (njcuk.fitting.ad1204.js, 2025-07 revision)
+writes and reads the **1-based** set:
+
+| option | 1 Min | 5 Min | 10 Min | 30 Min | Always-On |
+|---|---|---|---|---|---|
+| current plugin value | 5 | 1 | 2 | 3 | 4 |
+
+Our select currently uses the **0-based** MIOT-spec value list `4`/`0`/`1`/
+`2`/`3` — a perfect +1 shift, i.e. likely the same ordered enum across the
+spec-V1/V2 firmware split (the app gates other behavior on
+`firmwareCurrentVer > "2.1.2_0040"`). **The two agree nowhere, so verify
+against your hardware before trusting either.** To probe: set a timeout in
+HA, read back the raw piid-6 value, and compare.
 
 ## Temperature
 
@@ -138,17 +157,27 @@ table (0x0a/0x0f/0x1e/…) was coincidence. A SINK240 sweep across PD Fixed
 
 `cap_w = low_byte_decimal`. A zero low byte means "no contract / idle port".
 
-### High byte (PDO kind)
+### High byte (negotiated protocol id)
 
-Observed on C1/C2:
-- `0x07` — PD Fixed PDO (every Fixed contract tested)
-- `0x08` — PD PPS (APDO) (both PPS bands tested)
+The high byte of each half is a protocol id. Observed values on C1/C2 —
+and, since 2026-08-25, the full table the Mi Home plugin renders for these
+bytes (`getC1C2ProtocolStr`, njcuk.fitting.ad1204.js 5527-5574):
 
-Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
-- `0x01` at 5 V USB-A DCP
-- `0x02` at USB-A QC
-- `0x04` at USB-A 9 V (QC 2.0 / SCP phone charging)
+| high byte | official label | notes |
+|---|---|---|
+| 0x01 / 0x02 | 5V | USB plain / legacy |
+| 0x03 | QC | |
+| 0x04 | AFC | Samsung |
+| 0x05 | FCP | Huawei |
+| 0x06 | SCP | USB-A |
+| 0x07 | PD | fixed PDO |
+| 0x08 / 0x09 | PPS | |
+| 0x0a | UFCS | |
 
+The app displays this label for every port from the 17/18 words — it never
+derives names from the live `b1` byte inside the port-info words. Check the
+raw low-byte watt breakdown above for the negotiated-cap "PDO cap" sensor;
+the id is exposed as the per-port **negotiated protocol** diagnostic.
 
 ## Open questions
 
@@ -158,17 +187,31 @@ Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
   that `b1` can shift to `0x01`, `0x03`, `0x08`, etc. under load.
 - **`b0` upper nibble** (seen `0x01` and `0x11` on same port at different
   times) — CC polarity vs port role unresolved. Needs cable-flip / port-
-  swap with the same sink under the same contract.
+  swap with the same sink under the same contract. `0x11` on C3 is now
+  confirmed as the merged C3&A output slot (exposed as a diagnostic binary
+  sensor).
 - **No EPR**: the charger tops out at PD 3.0 SPR 100 W (KM003C confirms);
   the "100 W" SINK240 case landed on plain 20 V/5 A SPR rather than PD 3.1.
-- **`protocol_ctl_extend`** (u32 `0x03030f0f` constant so far) and
-  **`port_ctl`** bitmap (`0x0f` constant) — not varied by Mi Home during
-  our captures. The long 2026-04-14 app session read both six times but wrote
-  neither, so their writable semantics remain unknown and the integration does
-  not expose controls for them.
-- **piid `0x0e` (`enter`)** — purpose remains unknown. The long Mi Home
-  session did not write it, and normal `2.6` and `2.19` setting writes completed
-  without a following `2.14` write. The integration therefore does not treat it
-  as a generic settings-sync command.
+- **`screen_save_time` encoding** — dual (0-based vs 1-based) tables above;
+  needs a hardware probe to pick the current firmware's set.
+- **`delay_time_*` push cadence** — do countdown values tick down via
+  property pushes while connected, or only on the app's delay page? We
+  expose them push-only; a live capture of an armed countdown would confirm.
 - **Temperature telemetry** — the charger has internal NTC monitoring, but no
   BLE MIOT property or Mi Home plugin field currently exposes it.
+
+## Closed items (2026-08-25, from the official plugin audit)
+
+- **piid `0x0e` (`enter`)** — now understood: an app-attach handshake. Mi
+  Home writes `2` (u8) once immediately after login, before its first
+  property read, and re-sends it when reads fail; it is never read back.
+  The integration now sends it on connect.
+- **`protocol_ctl_extend` (2.21) and `port_ctl` (2.16) writable semantics**
+  — confirmed: 2.21 is a per-port toggle u32 (see ports.py; reserved bit 3
+  forced on C1/C2), 2.16 a port-enable bitmap; both are written with
+  read-modify-write by the app and by this integration.
+- **piids `0x11`/`0x12` as writes** — **never written by the app**; they are
+  read-only negotiated-contract reports. The integration exposes them as
+  read-only diagnostics only.
+- **Temperature** — re-confirmed absent across the plugin bundle (2025-07
+  revision); no property, no UI string, no fault table consumer.

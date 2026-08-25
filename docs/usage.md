@@ -31,15 +31,22 @@ One parent device per charger, with a sub-device per port (C1, C2, C3, A).
 All sub-devices inherit the parent's area.
 
 Per port: **power** (W), **voltage** (V), **current** (A), **protocol**
-(diagnostic), **PDO cap** (W, diagnostic). There's also a charger-level
-**total power** sensor.
+(diagnostic), **PDO cap** (W, diagnostic), **negotiated protocol**
+(diagnostic enum), **delay power-off** (min, diagnostic — reflected from
+device pushes; no setter). There's also a charger-level **total power**
+sensor.
 
 Charger-level controls (on the parent device):
 
 - **Scene mode** (select): AI Mode / Hybrid / Single / Dual.
-- **USB-A always on** (switch): keeps the USB-A rail energized.
+- **USB-A always on** (switch): keeps the USB-A rail energized (officially
+  a 4-hour trickle mode).
 - **Screen off when idle** (switch): charger display auto-sleeps.
 - **Lock screen orientation** (switch): disables display auto-rotate.
+- **SCP / MiPPS / UFCS (C1/C2)** (switches): global fast-charging protocol
+  gates; see the firmware note below.
+- **Reset to default** (button): restores all charger settings to their
+  factory defaults (the Mi Home "Reset to default" action).
 
 ## Options
 
@@ -55,8 +62,14 @@ Charger-level controls (on the parent device):
 ## Notes and limits
 
 - **Writable controls:** USB-A always on, screen-off when idle, lock screen
-  orientation, scene mode. More will be added as we reverse additional
-  settings (per-port protocol masks are still pending).
+  orientation, scene mode, the three global protocol gates, per-port
+  enable + per-port PD/PPS/UFCS/SCP protocol switches, and the factory
+  reset button.
+- **Firmware-version gating (not enforced in code).** The official app
+  shows per-port protocol toggles (property `2.21`) only on firmware newer
+  than `2.1.2_0040`, otherwise a single global gate (property `2.7`). This
+  integration exposes both unconditionally — on a given firmware one set is
+  the effective one and the other may no-op. See the README note.
 - **Live updates:** while connected, the charger pushes changed port and
   setting values. The integration ACKs and coalesces them immediately; the
   interval above is a fallback full-state reconciliation, not the primary
