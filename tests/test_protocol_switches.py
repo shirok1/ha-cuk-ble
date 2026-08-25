@@ -95,3 +95,31 @@ def test_encode_individual_c1_pd_toggle() -> None:
     """Toggling only C1 PD sets bit 0 (plus reserved bit 3 = 0x09)."""
     value = encode_protocol_extend({"c1": {"pd": True}})
     assert value == 0x09
+
+
+def test_parse_protocol_ctrl_bits() -> None:
+    """PIID 7 layout: bit0=SCP, bit1=MiPPS, bit2=UFCS (official app values)."""
+    from cuktech_ble.protocol_switches import parse_protocol_ctrl
+
+    # Official DischargeProtocol page writes 3 (UFCS off) and 7 (all on).
+    assert parse_protocol_ctrl(3) == {"scp": True, "mipps": True, "ufcs": False}
+    assert parse_protocol_ctrl(7) == {"scp": True, "mipps": True, "ufcs": True}
+    assert parse_protocol_ctrl(4) == {"scp": False, "mipps": False, "ufcs": True}
+
+
+def test_update_protocol_ctrl_flips_one_bit_only() -> None:
+    from cuktech_ble.protocol_switches import update_protocol_ctrl
+
+    assert update_protocol_ctrl(7, "ufcs", False) == 3
+    assert update_protocol_ctrl(3, "ufcs", True) == 7
+    assert update_protocol_ctrl(0, "scp", True) == 1
+    assert update_protocol_ctrl(5, "mipps", False) == 5 & ~(1 << 1)
+
+
+def test_update_protocol_ctrl_rejects_unknown_gate() -> None:
+    import pytest
+
+    from cuktech_ble.protocol_switches import update_protocol_ctrl
+
+    with pytest.raises(ValueError):
+        update_protocol_ctrl(7, "pd", True)

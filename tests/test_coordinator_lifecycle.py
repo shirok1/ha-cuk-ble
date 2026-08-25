@@ -1263,3 +1263,67 @@ def test_factory_reset_failure_rolls_back_connection(monkeypatch) -> None:
         assert client.disconnect_calls == 1
 
     asyncio.run(run())
+
+
+def test_protocol_gate_write_flips_single_bit_and_reconciles(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator._arm_idle_release = Mock()
+        coordinator.async_set_updated_data = Mock()
+        # Device reports UFCS off, SCP/MiPPS on (official value 3).
+        coordinator._property_values[(2, 0x07)] = (
+            coordinator_module.PropertyValue(2, 0x07, 0, 0x01, 0x10, 3)
+        )
+        set_property = AsyncMock()
+        monkeypatch.setattr(coordinator_module, "set_property", set_property)
+
+        await coordinator.async_set_protocol_gate("ufcs", True)
+
+        set_property.assert_awaited_once_with(
+            session, 2, 0x07, 7, u32=False,
+            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+        )
+        assert coordinator._property_values[(2, 0x07)].value == 7
+        assert (2, 0x07) in coordinator._reconcile_keys
+        reconcile_task = coordinator._reconcile_task
+        assert reconcile_task is not None
+        reconcile_task.cancel()
+
+    asyncio.run(run())
+
+
+def test_protocol_gate_write_without_prior_reading_assumes_all_on(
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator._arm_idle_release = Mock()
+        coordinator.async_set_updated_data = Mock()
+        set_property = AsyncMock()
+        monkeypatch.setattr(coordinator_module, "set_property", set_property)
+
+        await coordinator.async_set_protocol_gate("ufcs", False)
+
+        # Unknown state → assume the official all-on default 0b111; clearing
+        # UFCS yields 0b011, byte-identical to the plugin's UFCS-off write.
+        set_property.assert_awaited_once_with(
+            session, 2, 0x07, 3, u32=False,
+            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+        )
+        reconcile_task = coordinator._reconcile_task
+        assert reconcile_task is not None
+        reconcile_task.cancel()
+
+    asyncio.run(run())

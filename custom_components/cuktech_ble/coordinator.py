@@ -688,6 +688,28 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             self._arm_idle_release(client)
             self._schedule_write_reconcile(item.key)
 
+    async def async_set_protocol_gate(self, name: str, enabled: bool) -> None:
+        """Read-modify-write PIID 7 (protocol_ctrl) to toggle one global flag.
+
+        Bit layout (Mi Home plugin parseProtocolInfo / DischargeProtocol
+        composer): bit0=SCP, bit1=MiPPS, bit2=UFCS; upper bits zero. The
+        official per-toggle write flips one bit and preserves the rest.
+        Without a prior reading the all-on value 0b111 is assumed — the
+        state the official app initializes and restores after a reset.
+        """
+        from .lib.protocol_switches import update_protocol_ctrl
+
+        async with self._connected_for_write() as (session, client, generation):
+            current = self._property_values.get((2, 0x07))
+            current_value = current.value if current is not None else 0b111
+            new_value = update_protocol_ctrl(int(current_value), name, enabled)
+            await self._async_confirm_write(session, 2, 0x07, new_value)
+            self._require_stable_connection(session, client, generation)
+            item = self._optimistic_property_value(2, 0x07, new_value)
+            self._apply_write_feedback(session, item)
+            self._arm_idle_release(client)
+            self._schedule_write_reconcile(item.key)
+
     async def async_factory_reset(self) -> None:
         """Invoke the charger's reset_setting action (siid 2 aiid 1).
 

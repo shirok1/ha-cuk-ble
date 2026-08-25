@@ -147,6 +147,15 @@
             },
             "protocol_scp": {
                 "name": "SCP"
+            },
+            "protocol_gate_scp": {
+                "name": "SCP"
+            },
+            "protocol_gate_mipps": {
+                "name": "MiPPS"
+            },
+            "protocol_gate_ufcs": {
+                "name": "UFCS (C1/C2)"
             }
         },
         "select": {

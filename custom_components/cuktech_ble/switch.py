@@ -17,7 +17,7 @@ from . import AD1204UConfigEntry
 from .coordinator import AD1204UCoordinator, AD1204UData
 from .entity import AD1204UEntity
 from .lib.ports import PORTS, PORT_CTL_BIT
-from .lib.protocol_switches import parse_protocol_switches
+from .lib.protocol_switches import parse_protocol_ctrl, parse_protocol_switches
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -92,6 +92,21 @@ def _protocol_switch_getter(
     return _get
 
 
+# Global protocol gates from PIID 7 (protocol_ctrl): bit0=SCP, bit1=MiPPS,
+# bit2=UFCS (UFCS affects C1/C2 only). Writable — the official app toggles
+# these on pre-spec-V2 firmware and after a factory reset.
+PROTOCOL_GATES: tuple[str, ...] = ("scp", "mipps", "ufcs")
+
+
+def _protocol_gate_getter(gate: str) -> Callable[[AD1204UData], bool | None]:
+    def _get(data: AD1204UData) -> bool | None:
+        if data.protocol_ctl is None:
+            return None
+        return parse_protocol_ctrl(data.protocol_ctl).get(gate)
+
+    return _get
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: AD1204UConfigEntry,
@@ -122,6 +137,15 @@ async def async_setup_entry(
                     getter=_protocol_switch_getter(port, switch),
                 )
             )
+    # Global protocol gates (PIID 7 u8, read-modify-write).
+    for gate in PROTOCOL_GATES:
+        entities.append(
+            AD1204UProtocolGateSwitch(
+                coordinator,
+                gate=gate,
+                getter=_protocol_gate_getter(gate),
+            )
+        )
     async_add_entities(entities)
 
 
@@ -240,3 +264,38 @@ class AD1204UProtocolSwitch(AD1204UEntity, SwitchEntity):
         await self.coordinator.async_set_protocol_switch(
             self._port, self._switch_name, False
         )
+
+
+class AD1204UProtocolGateSwitch(AD1204UEntity, SwitchEntity):
+    """Global protocol gate backed by PIID 7 (protocol_ctrl) bit toggling."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: AD1204UCoordinator,
+        *,
+        gate: str,
+        getter: Callable[[AD1204UData], bool | None],
+    ) -> None:
+        super().__init__(coordinator)
+        self._gate = gate
+        self._getter = getter
+        self.entity_description = SwitchEntityDescription(
+            key=f"protocol_gate_{gate}",
+            translation_key=f"protocol_gate_{gate}",
+        )
+        self._attr_unique_id = f"{coordinator.address}_protocol_gate_{gate}"
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return self._getter(data)
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_protocol_gate(self._gate, True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_protocol_gate(self._gate, False)

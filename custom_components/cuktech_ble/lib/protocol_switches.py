@@ -70,3 +70,33 @@ def encode_protocol_extend(switches: dict[str, dict[str, bool]]) -> int:
     c3 = _c3a_flags(switches.get("c3"))
     a = _c3a_flags(switches.get("a"))
     return (a << 24) | (c3 << 16) | (c2 << 8) | c1
+
+
+# ----- PIID 7 (protocol_ctrl) global gate bitmap ----------------------------
+#
+# Writable u8 with three flags (njcuk.fitting.ad1204.js parseProtocolInfo
+# 5577-5604 and the DischargeProtocol page composer 27333-27403):
+#
+#     bit0 = SCP, bit1 = MiPPS (Xiaomi private PPS), bit2 = UFCS
+#
+# The UFCS gate applies to the C1/C2 ports only (i18n hint "only_c1c2").
+# Upper bits are always zero — unlike PIID 21 there is no fixed reserved bit.
+# The official per-toggle write flips one bit and keeps the others as read.
+
+PROTOCOL_CTRL_BITS: dict[str, int] = {"scp": 0, "mipps": 1, "ufcs": 2}
+
+
+def parse_protocol_ctrl(value: int) -> dict[str, bool]:
+    """Decode a PIID 7 u8 into named flag states."""
+    return {name: bool(value & (1 << bit)) for name, bit in PROTOCOL_CTRL_BITS.items()}
+
+
+def update_protocol_ctrl(value: int, name: str, enabled: bool) -> int:
+    """Return ``value`` with one named flag flipped; unknown names raise."""
+    try:
+        bit = PROTOCOL_CTRL_BITS[name]
+    except KeyError:
+        raise ValueError(f"unknown protocol gate {name!r}") from None
+    if enabled:
+        return value | (1 << bit)
+    return value & ~(1 << bit)
