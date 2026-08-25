@@ -825,7 +825,7 @@ def test_successful_write_confirms_and_publishes_without_reread(monkeypatch) -> 
         coordinator._arm_idle_release.assert_called_once_with(client)
         set_property.assert_awaited_once_with(
             session, 2, 5, 1, u32=False,
-            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+            timeout=coordinator_module.WRITE_RESPONSE_GRACE,
         )
         # The confirmed value is applied like the app's optimistic setState.
         assert coordinator._property_values[(2, 5)].value == 1
@@ -858,7 +858,7 @@ def test_optimistic_value_keeps_device_reported_encoding() -> None:
     asyncio.run(run())
 
 
-def test_write_response_timeout_retries_once(monkeypatch) -> None:
+def test_write_response_timeout_accepts_transport_ack_without_retry(monkeypatch) -> None:
     async def run() -> None:
         coordinator = _make_coordinator(idle_release=300)
         client = FakeClient()
@@ -866,19 +866,30 @@ def test_write_response_timeout_retries_once(monkeypatch) -> None:
         coordinator._client = client
         coordinator._session = session
         coordinator._ensure_connected = AsyncMock(return_value=session)
-        set_property = AsyncMock(side_effect=[coordinator_module.MiSessionTimeout(), AsyncMock()])
+        set_property = AsyncMock(
+            side_effect=coordinator_module.MiSessionTimeout(
+                "timeout waiting for MIOT response"
+            )
+        )
         monkeypatch.setattr(coordinator_module, "set_property", set_property)
-        monkeypatch.setattr(coordinator_module.asyncio, "sleep", AsyncMock())
 
         await coordinator.async_set_property(2, 5, 2)
 
-        assert set_property.await_count == 2
+        set_property.assert_awaited_once_with(
+            session,
+            2,
+            5,
+            2,
+            u32=False,
+            timeout=coordinator_module.WRITE_RESPONSE_GRACE,
+        )
         assert coordinator._property_values[(2, 5)].value == 2
+        assert coordinator._client is client
 
     asyncio.run(run())
 
 
-def test_write_response_timeout_twice_fails_without_merge(monkeypatch) -> None:
+def test_write_protocol_failure_fails_without_merge(monkeypatch) -> None:
     async def run() -> None:
         coordinator = _make_coordinator(idle_release=0)
         client = FakeClient()
@@ -888,17 +899,16 @@ def test_write_response_timeout_twice_fails_without_merge(monkeypatch) -> None:
         coordinator._auth = auth
         coordinator._session = session
         coordinator._ensure_connected = AsyncMock(return_value=session)
-        failure = coordinator_module.MiSessionTimeout("timeout waiting for MIOT response")
-        set_property = AsyncMock(side_effect=[failure, failure])
+        failure = coordinator_module.MiotProtocolError("set rejected")
+        set_property = AsyncMock(side_effect=failure)
         monkeypatch.setattr(coordinator_module, "set_property", set_property)
-        monkeypatch.setattr(coordinator_module.asyncio, "sleep", AsyncMock())
 
         with pytest.raises(
             coordinator_module.UpdateFailed, match="set failed"
         ):
             await coordinator.async_set_property(2, 5, 2)
 
-        assert set_property.await_count == 2
+        assert set_property.await_count == 1
         assert (2, 5) not in coordinator._property_values
         cleanup_task = coordinator._disconnect_task
         if cleanup_task is not None:
@@ -1287,7 +1297,7 @@ def test_protocol_gate_write_flips_single_bit_and_reconciles(monkeypatch) -> Non
 
         set_property.assert_awaited_once_with(
             session, 2, 0x07, 7, u32=False,
-            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+            timeout=coordinator_module.WRITE_RESPONSE_GRACE,
         )
         assert coordinator._property_values[(2, 0x07)].value == 7
         assert (2, 0x07) in coordinator._reconcile_keys
@@ -1320,7 +1330,7 @@ def test_protocol_gate_write_without_prior_reading_assumes_all_on(
         # UFCS yields 0b011, byte-identical to the plugin's UFCS-off write.
         set_property.assert_awaited_once_with(
             session, 2, 0x07, 3, u32=False,
-            timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT,
+            timeout=coordinator_module.WRITE_RESPONSE_GRACE,
         )
         reconcile_task = coordinator._reconcile_task
         assert reconcile_task is not None

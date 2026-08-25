@@ -20,13 +20,14 @@ DEFAULT_UPDATE_PERIOD = 30.0
 # Write feedback model, mirroring the official Mi Home plugin
 # (njcuk.fitting.ad1204.js) and its BLE spec SDK:
 #
-# - The set-properties response is the authoritative confirmation of a
-#   write; the app treats per-property code 0 as success and resends once
-#   (~50-100 ms later) when the native layer reports a response timeout.
+# - Prefer the set-properties response when firmware emits one. Some AD1204U
+#   firmware applies the write after transport RCV_OK but never emits that
+#   application response, so property writes use a short optional grace period.
 # - The charger's spontaneous property-changed push keeps state current
 #   afterwards, so no read runs inline after a write.
 # - Any reconciliation read is debounced seconds later (the app's
 #   startPortDelayInfoTimer uses 1.5-3 s), never in the caller's path.
 WRITE_CONFIRM_TIMEOUT = 5.0  # bound one set-properties response wait
 WRITE_RETRY_DELAY = 0.1  # pause before the single confirmation retry
+WRITE_RESPONSE_GRACE = 0.5  # optional set-response wait after transport RCV_OK
 WRITE_RECONCILE_DELAY = 3.0  # debounce before the post-write re-read

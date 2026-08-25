@@ -108,21 +108,23 @@ eight queued events could exhaust the response-search budget. Raw diagnostic
 history retains only the newest 16 frames, and malformed parcel counts are
 rejected before allocation.
 
-Mi Home's Android transport also wrote every encrypted outbound data parcel
-twice, 4.5–15 ms apart, while sending each announcement once. Single parcel
-writes are reliable in live integration tests, so this duplication is recorded
-as a vendor behavior rather than copied without an A/B failure test.
+Mi Home's Android transport writes every encrypted outbound data parcel twice,
+4.5–15 ms apart, while sending each announcement once. An A/B test on live
+firmware showed that duplicating parcels did not restore missing set responses,
+so the integration keeps one write per parcel.
 
 ### Write feedback model
 
 The Mi Home plugin bundle (`njcuk.fitting.ad1204`) shows how writes are
 confirmed, and the integration follows the same model:
 
-- **The set-properties response is the confirmation.** The app's
+- **The set-properties response is preferred when present.** The app's
   `isSpecResultOK` treats per-property `code == 0` as success, resends once
   ~50–100 ms later when the native layer reports timeout (`error.code ===
-  -3`), and rolls back its optimistic UI otherwise. It never re-reads to
-  verify a write.
+  -3`), and rolls back its optimistic UI otherwise. Live AD1204U firmware can
+  instead apply a request after transport RCV_OK without emitting this response;
+  the integration accepts that bounded case without resending and reconciles it
+  asynchronously.
 - **State stays current through pushes.** After login the app subscribes to
   `prop.<siid>.<piid>` messages and updates from `properties_changed`
   events; a retained session performed no steady polling after its initial

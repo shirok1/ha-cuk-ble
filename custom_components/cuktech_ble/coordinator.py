@@ -11,9 +11,10 @@ Strategy: push-driven BLE session with periodic reconciliation and an idle lease
 
 Writes follow the official Mi Home plugin's feedback model:
 
-- The set-properties response is the authoritative confirmation; a response
-  timeout is retried once after a short pause (the plugin resends on -3).
-- The confirmed value is merged optimistically and published immediately, so
+- The set-properties response is validated when present. Firmware that applies
+  a transport-acknowledged write without replying is accepted after a short
+  response grace period; the command is not sent twice.
+- The accepted value is merged optimistically and published immediately, so
   entities flip as soon as the charger accepts a write — no blocking re-read.
 - The charger echoes every setting change as a property-changed push; those
   pushes keep the state honest afterwards.
@@ -43,6 +44,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     WRITE_CONFIRM_TIMEOUT,
     WRITE_RECONCILE_DELAY,
+    WRITE_RESPONSE_GRACE,
     WRITE_RETRY_DELAY,
 )
 from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
@@ -501,12 +503,14 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         *,
         u32: bool = False,
     ) -> None:
-        """Send one set and require a successful set-properties response.
+        """Send one set and validate its response when firmware provides it.
 
-        The response status is the device's confirmation — the same feedback
-        the Mi Home plugin waits for. A response timeout (its native error -3)
-        is retried exactly once after a short pause; anything else surfaces
-        immediately so HA can report the failure and keep the old state.
+        ``MiSessionTimeout`` occurs only after the encrypted request received
+        transport-level RCV_OK. Some firmware applies the property at that
+        point but never emits the application-level 0b20 response. Accept that
+        bounded timeout without retrying the state-changing command; the
+        optimistic update and delayed single-property read converge the state.
+        Protocol errors and transport failures still surface immediately.
         """
         try:
             await set_property(
@@ -515,24 +519,15 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 piid,
                 value,
                 u32=u32,
-                timeout=WRITE_CONFIRM_TIMEOUT,
+                timeout=WRITE_RESPONSE_GRACE,
             )
-            return
         except MiSessionTimeout:
             _LOGGER.debug(
-                "set (siid=%s, piid=0x%02x) response timed out; retrying once",
+                "set (siid=%s, piid=0x%02x) transport acknowledged without "
+                "an application response; reconciling asynchronously",
                 siid,
                 piid,
             )
-        await asyncio.sleep(WRITE_RETRY_DELAY)
-        await set_property(
-            session,
-            siid,
-            piid,
-            value,
-            u32=u32,
-            timeout=WRITE_CONFIRM_TIMEOUT,
-        )
 
     def _optimistic_property_value(
         self,
