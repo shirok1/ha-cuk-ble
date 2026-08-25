@@ -54,7 +54,11 @@ MAX_MIOT_PARCELS = 64
 MAX_MIOT_COUNTER = 0xFFFF
 EXPECTED_RESPONSE_OPCODES: dict[bytes, frozenset[bytes]] = {
     b"\x05\x20": frozenset((b"\x05\x20",)),
+    # set-properties request → set-properties response.
     b"\x0c\x20": frozenset((b"\x0b\x20",)),
+    # do-action request → action response (same wire prefix as the
+    # single-entry set response; the method byte distinguishes them).
+    b"\x0a\x20": frozenset((b"\x0b\x20",)),
     b"\x24\x20": frozenset((b"\x66\x20",)),
     b"\x33\x20": frozenset((b"\x0e\x20", b"\x1c\x20", b"\x93\x20")),
 }

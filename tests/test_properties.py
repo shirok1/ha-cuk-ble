@@ -3,8 +3,11 @@ import asyncio
 import pytest
 from cuktech_ble.xiaomi.properties import (
     MiotProtocolError,
+    do_action,
+    encode_do_action,
     encode_get_properties,
     encode_set_property,
+    parse_action_response,
     parse_notification,
     parse_response,
     parse_set_response,
@@ -182,3 +185,76 @@ def test_parse_response_accepts_uint16_value() -> None:
     items = parse_response(pt)
 
     assert items[0].value == 300
+
+
+def test_encode_do_action_matches_reconstructed_wire_format() -> None:
+    # reset_setting (siid=2 aiid=1, no arguments): method byte 05 at index 4,
+    # one operand with an empty argument list. Byte 0 is the total frame
+    # length including itself — the invariant shared by every captured frame.
+    body = encode_do_action(0x000D, 2, 1)
+
+    assert body == bytes.fromhex("0a200d00050102010000")
+    assert body[0] == len(body)
+
+
+def test_parse_action_response_ok() -> None:
+    pt = bytes.fromhex("0b 20 0d 00 06 01 02 01 00 00 00")
+
+    results = parse_action_response(pt)
+
+    assert results == [(2, 1, 0)]
+
+
+def test_parse_action_response_rejects_bad_frames() -> None:
+    # Set-response method byte (0x01), not an action response.
+    with pytest.raises(MiotProtocolError, match="bad action-response header"):
+        parse_action_response(bytes.fromhex("0b 20 0d 00 01 01 02 0f 00 00 00"))
+
+    # Length byte disagrees with the actual frame size.
+    with pytest.raises(MiotProtocolError, match="bad action-response header"):
+        parse_action_response(bytes.fromhex("0c 20 0d 00 06 01 02 01 00 00 00"))
+
+    # Count announces two entries but only one is present.
+    with pytest.raises(MiotProtocolError, match="truncated action-response"):
+        parse_action_response(bytes.fromhex("0b 20 0d 00 06 02 02 01 00 00 00"))
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (
+            bytes.fromhex("0b 20 0d 00 06 01 02 02 00 00 00"),
+            "got result for siid=2, aiid=2",
+        ),
+        (
+            bytes.fromhex("0b 20 0d 00 06 01 02 01 00 05 00"),
+            "failed with status 0x0005",
+        ),
+    ),
+)
+def test_do_action_requires_matching_success(response: bytes, message: str) -> None:
+    class FakeSession:
+        async def send_request(self, request: bytes, **_kwargs) -> bytes:
+            assert request == bytes.fromhex("0a 20 0d 00 05 01 02 01 00 00")
+            return response
+
+    async def run() -> None:
+        with pytest.raises(MiotProtocolError, match=message):
+            await do_action(  # type: ignore[arg-type]
+                FakeSession(), 2, 1, seq=0x000D
+            )
+
+    asyncio.run(run())
+
+
+def test_do_action_accepts_exact_matching_success() -> None:
+    class FakeSession:
+        async def send_request(self, request: bytes, **_kwargs) -> bytes:
+            assert request == bytes.fromhex("0a 20 0d 00 05 01 02 01 00 00")
+            return bytes.fromhex("0b 20 0d 00 06 01 02 01 00 00 00")
+
+    asyncio.run(
+        do_action(  # type: ignore[arg-type]
+            FakeSession(), 2, 1, seq=0x000D
+        )
+    )

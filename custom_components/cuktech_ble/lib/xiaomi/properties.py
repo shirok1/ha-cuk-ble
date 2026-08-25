@@ -125,6 +125,95 @@ def _parse_property_entries(
     return out
 
 
+# --- do_action (no-argument actions) ----------------------------------------
+#
+# Frame layout reconstructed, not capture-verified: every captured opcode
+# shares one invariant — plaintext byte 0 is the total frame length including
+# itself — and byte 4 carries the MIOT method code (set=0/set_rsp=1/get=2/
+# get_rsp=3/properties_changed=4/action=5/action_rsp=6, per the MIOT BLE spec
+# opcode list in the vendor SDK). The official Mi Home plugin invokes
+# reset_setting (siid=2 aiid=1) with empty arguments through this path
+# (njcuk.fitting.ad1204.js doSettingResetAction):
+#
+#   request  = 0a 20 <seq_le2> 05 01 <siid> <aiid_le2> 00
+#   response = 0b 20 <seq_le2> 06 01 <siid> <aiid_le2> <status_le2>
+#
+# The no-argument response happens to share the set-response prefix (0b 20);
+# the method byte at index 4 distinguishes them.
+
+ACTION_REQUEST_OPCODE = b"\x0a\x20"
+ACTION_RESPONSE_OPCODE = b"\x0b\x20"
+ACTION_METHOD = 0x05
+ACTION_RESPONSE_METHOD = 0x06
+
+
+def encode_do_action(seq: int, siid: int, aiid: int) -> bytes:
+    """Encode a no-argument action request (frame length is always 10)."""
+    body = bytes([0x0A, 0x20]) + seq.to_bytes(2, "little")
+    body += bytes([ACTION_METHOD, 0x01])  # method=action, operand count=1
+    body += bytes([siid]) + aiid.to_bytes(2, "little") + bytes([0x00])
+    return body
+
+
+def parse_action_response(pt: bytes) -> list[tuple[int, int, int]]:
+    """Decode an action response. Returns [(siid, aiid, status), ...]."""
+    if (
+        len(pt) < 6
+        or pt[1] != 0x20
+        or pt[4] != ACTION_RESPONSE_METHOD
+        or pt[0] != len(pt)
+    ):
+        raise MiotProtocolError(f"bad action-response header: {pt[:6].hex()}")
+    count = pt[5]
+    i = 6
+    out: list[tuple[int, int, int]] = []
+    for _ in range(count):
+        if i + 5 > len(pt):
+            raise MiotProtocolError(f"truncated action-response: {pt.hex()}")
+        siid = pt[i]
+        aiid = int.from_bytes(pt[i + 1 : i + 3], "little")
+        status = int.from_bytes(pt[i + 3 : i + 5], "little")
+        out.append((siid, aiid, status))
+        i += 5
+    if i != len(pt):
+        raise MiotProtocolError(
+            f"unexpected trailing action-response data: {pt.hex()}"
+        )
+    return out
+
+
+async def do_action(
+    session: MiSession,
+    siid: int,
+    aiid: int,
+    *,
+    seq: int | None = None,
+    timeout: float | None = None,
+) -> None:
+    """Invoke one no-argument MIOT action. Raises on non-zero status."""
+    if seq is None:
+        seq = session.next_sequence()
+    request = encode_do_action(seq, siid, aiid)
+    response_pt = await session.send_request(request, timeout=timeout)
+    results = parse_action_response(response_pt)
+    if len(results) != 1:
+        raise MiotProtocolError(
+            f"do_action(siid={siid}, aiid={aiid}) expected exactly "
+            f"one result, got {len(results)}"
+        )
+    r_siid, r_aiid, r_status = results[0]
+    if (r_siid, r_aiid) != (siid, aiid):
+        raise MiotProtocolError(
+            f"do_action(siid={siid}, aiid={aiid}) got result for "
+            f"siid={r_siid}, aiid={r_aiid}"
+        )
+    if r_status != 0:
+        raise MiotProtocolError(
+            f"do_action(siid={siid}, aiid={aiid}) failed "
+            f"with status 0x{r_status:04x}"
+        )
+
+
 async def get_properties(
     session: MiSession,
     tuples: tuple[tuple[int, int], ...] = DEFAULT_READ_TUPLES,
