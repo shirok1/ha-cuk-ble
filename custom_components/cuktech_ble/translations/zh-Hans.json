@@ -89,6 +89,11 @@
                 "name": "使用状态"
             }
         },
+        "button": {
+            "factory_reset": {
+                "name": "恢复到默认"
+            }
+        },
         "sensor": {
             "cuktech_power": {
                 "name": "功率"

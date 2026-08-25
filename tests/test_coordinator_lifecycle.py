@@ -1175,3 +1175,91 @@ def test_async_set_port_enabled_rejects_unknown_port() -> None:
             await coordinator.async_set_port_enabled("c4", True)
 
     asyncio.run(run())
+
+
+def test_factory_reset_invokes_action_and_schedules_full_reconcile(
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator._arm_idle_release = Mock()
+        do_action = AsyncMock()
+        monkeypatch.setattr(coordinator_module, "do_action", do_action)
+
+        await coordinator.async_factory_reset()
+
+        do_action.assert_awaited_once_with(
+            session, 2, 1, timeout=coordinator_module.WRITE_CONFIRM_TIMEOUT
+        )
+        coordinator._arm_idle_release.assert_called_once_with(client)
+        assert coordinator._reconcile_keys == set(
+            coordinator_module.DEFAULT_READ_TUPLES
+        )
+        reconcile_task = coordinator._reconcile_task
+        assert reconcile_task is not None
+        reconcile_task.cancel()
+
+    asyncio.run(run())
+
+
+def test_factory_reset_retries_once_on_response_timeout(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator._arm_idle_release = Mock()
+        sleeps = AsyncMock()
+        monkeypatch.setattr(coordinator_module.asyncio, "sleep", sleeps)
+        do_action = AsyncMock(
+            side_effect=[
+                coordinator_module.MiSessionTimeout("timeout"),
+                None,
+            ]
+        )
+        monkeypatch.setattr(coordinator_module, "do_action", do_action)
+
+        await coordinator.async_factory_reset()
+
+        assert do_action.await_count == 2
+        sleeps.assert_awaited_once_with(
+            coordinator_module.WRITE_RETRY_DELAY
+        )
+        reconcile_task = coordinator._reconcile_task
+        assert reconcile_task is not None
+        reconcile_task.cancel()
+
+    asyncio.run(run())
+
+
+def test_factory_reset_failure_rolls_back_connection(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        do_action = AsyncMock(side_effect=RuntimeError("status 0x0100"))
+        monkeypatch.setattr(coordinator_module, "do_action", do_action)
+
+        with pytest.raises(Exception):  # noqa: B017
+            await coordinator.async_factory_reset()
+
+        # The write context tears the session down so the next poll reconnects.
+        assert coordinator._session is None
+        assert client.disconnect_calls == 1
+
+    asyncio.run(run())

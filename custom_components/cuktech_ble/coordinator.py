@@ -56,8 +56,10 @@ from .lib.ports import (
 from .lib.xiaomi import MiAuthClient
 from .lib.xiaomi.auth import MiAuthInvalidTokenError
 from .lib.xiaomi.properties import (
+    DEFAULT_READ_TUPLES,
     MiotProtocolError,
     PropertyValue,
+    do_action,
     get_properties,
     parse_notification,
     set_property,
@@ -65,6 +67,11 @@ from .lib.xiaomi.properties import (
 from .lib.xiaomi.session import MiSession, MiSessionTimeout
 
 _LOGGER = logging.getLogger(__name__)
+
+# reset_setting action: restore charger settings to factory defaults
+# (njcuk.fitting.ad1204.js service map, aiid block).
+FACTORY_RESET_SIID = 2
+FACTORY_RESET_AIID = 1
 
 
 @dataclass
@@ -680,6 +687,37 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             self._apply_write_feedback(session, item)
             self._arm_idle_release(client)
             self._schedule_write_reconcile(item.key)
+
+    async def async_factory_reset(self) -> None:
+        """Invoke the charger's reset_setting action (siid 2 aiid 1).
+
+        Restores charger settings to their defaults, mirroring the Mi Home
+        plugin's doSettingResetAction. The action carries no arguments; the
+        response status is the only confirmation, retried once on a response
+        timeout like a property write. One debounced re-read of every polled
+        property reconciles the new defaults afterwards — the plugin waits
+        ~1 s and re-reads its protocol switches for the same reason.
+        """
+        async with self._connected_for_write() as (session, client, generation):
+            try:
+                await do_action(
+                    session,
+                    FACTORY_RESET_SIID,
+                    FACTORY_RESET_AIID,
+                    timeout=WRITE_CONFIRM_TIMEOUT,
+                )
+            except MiSessionTimeout:
+                _LOGGER.debug("factory reset response timed out; retrying once")
+                await asyncio.sleep(WRITE_RETRY_DELAY)
+                await do_action(
+                    session,
+                    FACTORY_RESET_SIID,
+                    FACTORY_RESET_AIID,
+                    timeout=WRITE_CONFIRM_TIMEOUT,
+                )
+            self._require_stable_connection(session, client, generation)
+            self._arm_idle_release(client)
+            self._schedule_write_reconcile(*DEFAULT_READ_TUPLES)
 
     async def async_set_port_enabled(self, port: str, enabled: bool) -> None:
         """Read-modify-write PIID 16 (port_ctl) to toggle one port's enable bit.

@@ -58,9 +58,11 @@ def test_home_assistant_skeleton_registers_expected_platforms() -> None:
     assert "Platform.SWITCH" in init_py
     # scene_mode enum reversed from a second capture — AI/Hybrid/Single/Dual.
     assert "Platform.SELECT" in init_py
-    # Number and button writes still not exercised.
+    # Factory reset mirrors the Mi Home plugin's "Reset to default" button
+    # (doSettingResetAction → siid 2 aiid 1 over BLE spec doAction).
+    assert "Platform.BUTTON" in init_py
+    # Number writes are still not exercised.
     assert "Platform.NUMBER" not in init_py
-    assert "Platform.BUTTON" not in init_py
 
 
 def test_verified_switches_and_port_ctl_are_exposed() -> None:
@@ -74,7 +76,8 @@ def test_verified_switches_and_port_ctl_are_exposed() -> None:
     # confirmed in cuktech-ble-server PROTOCOL_SWITCH_BITS.
     assert "AD1204UProtocolSwitch" in switch_py
     assert "0x15" in switch_py or "protocol_ctl_extend" in switch_py
-    # PIID 0x0e (enter) is write-only with unknown semantics — still excluded.
+    # The enter handshake lives in the session setup path (coordinator),
+    # never as a user-facing switch.
     assert "0x000e" not in switch_py
     assert "0x000E" not in switch_py
 

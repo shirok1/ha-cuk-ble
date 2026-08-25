@@ -33,6 +33,7 @@ from .lib.xiaomi.auth import MiAuthInvalidTokenError
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,

@@ -89,6 +89,11 @@
                 "name": "In use"
             }
         },
+        "button": {
+            "factory_reset": {
+                "name": "Reset to default"
+            }
+        },
         "sensor": {
             "cuktech_power": {
                 "name": "Power"
