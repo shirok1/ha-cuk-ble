@@ -15,7 +15,10 @@
             "cloud_fetch_failed": "无法从小米云端获取设备列表。",
             "cloud_fetch_cancelled": "获取小米设备列表已取消。",
             "cloud_device_not_found": "在所选的小米区域内未找到此充电器。请尝试其他区域。",
-            "cloud_unknown": "未知的云端错误。"
+            "cloud_unknown": "未知的云端错误。",
+            "invalid_auth": "充电器拒绝了此蓝牙密钥。请重新从米家获取，或检查手动输入的密钥。",
+            "cannot_connect": "无法连接充电器。请确认设备已通电、在蓝牙范围内，并关闭米家中的设备页面后重试。",
+            "unknown": "验证连接时发生意外错误。请重试；如仍失败，请查看日志。"
         },
         "progress": {
             "waiting_for_scan": "打开米家 App，点击扫描图标，扫描此二维码：\n\n![QR code]({qr_url})\n\n等待扫描…",
@@ -31,16 +34,16 @@
                 }
             },
             "method": {
-                "title": "选择如何提供蓝牙 Token",
-                "description": "CUKTECH AD1204U 需要一个 12 字节的蓝牙 Token。您可以从小米云端自动获取，或者手动输入。",
+                "title": "连接充电器",
+                "description": "通过米家扫码获取连接密钥，或输入已有密钥。密钥仅用于本地蓝牙连接。",
                 "menu_options": {
-                    "cloud": "从小米云端获取（扫码登录）",
-                    "manual": "手动输入 Token"
+                    "cloud": "使用米家扫码",
+                    "manual": "手动输入连接密钥"
                 }
             },
             "cloud_region": {
                 "title": "小米账号区域",
-                "description": "请选择您的米家账号所在区域。如不确定，请先尝试 **cn**，然后尝试 **de** 或 **sg**。",
+                "description": "请选择米家 App 设置中使用的地区。",
                 "data": {
                     "region": "区域"
                 }
@@ -50,21 +53,15 @@
                 "description": "打开米家 App，点击扫描图标，扫描下方二维码。\n\n![QR code]({qr_url})"
             },
             "cloud_error": {
-                "title": "云端登录问题",
-                "description": "出现问题：**{reason}**。\n\n点击提交返回并重试。"
+                "title": "重试连接米家",
+                "description": "请根据下方提示排查，然后重试。",
+                "submit": "重试"
             },
             "token": {
-                "title": "输入 {name} 的蓝牙 Token",
-                "description": "请粘贴此设备的 24 位（12 字节）十六进制 Token。您可以使用本集成附带的 tools/ad1204u_fetch_token.py 脚本从小米账号中获取。",
+                "title": "连接 {name}",
+                "description": "请输入此设备的 24 位十六进制蓝牙连接密钥。提交后将验证连接。也可以返回选择米家扫码，无需运行脚本。",
                 "data": {
-                    "token": "蓝牙 Token（十六进制）"
-                }
-            },
-            "reauth_confirm": {
-                "title": "更新 {name} 的蓝牙 Token",
-                "description": "充电器拒绝了已保存的蓝牙 Token。请输入新的 24 位（12 字节）十六进制 Token。",
-                "data": {
-                    "token": "新的蓝牙 Token（十六进制）"
+                    "token": "蓝牙连接密钥"
                 }
             }
         }
@@ -94,7 +91,7 @@
         },
         "button": {
             "factory_reset": {
-                "name": "恢复到默认"
+                "name": "恢复设备默认设置"
             }
         },
         "sensor": {
@@ -120,7 +117,7 @@
                 }
             },
             "pdo_cap": {
-                "name": "PDO容量"
+                "name": "协商功率上限"
             },
             "total_power": {
                 "name": "总功率"
@@ -153,28 +150,28 @@
                 "name": "锁定屏幕方向"
             },
             "port_enable": {
-                "name": "端口启用"
+                "name": "端口输出"
             },
             "protocol_pd": {
-                "name": "PD"
+                "name": "启用 PD"
             },
             "protocol_pps": {
-                "name": "PPS"
+                "name": "启用 PPS"
             },
             "protocol_ufcs": {
-                "name": "UFCS"
+                "name": "启用 UFCS"
             },
             "protocol_scp": {
-                "name": "SCP"
+                "name": "启用 SCP"
             },
             "protocol_gate_scp": {
-                "name": "SCP"
+                "name": "启用 SCP"
             },
             "protocol_gate_mipps": {
-                "name": "MiPPS"
+                "name": "启用 MiPPS"
             },
             "protocol_gate_ufcs": {
-                "name": "UFCS（仅C1/C2）"
+                "name": "启用 UFCS (C1/C2)"
             }
         },
         "select": {
@@ -188,7 +185,7 @@
                 }
             },
             "screen_save_time": {
-                "name": "屏幕设定",
+                "name": "屏幕亮屏时长",
                 "state": {
                     "1_min": "1 分钟",
                     "5_min": "5 分钟",
@@ -209,11 +206,32 @@
     "options": {
         "step": {
             "init": {
+                "menu_options": {
+                    "general": "状态更新",
+                    "advanced": "高级连接设置"
+                }
+            },
+            "general": {
+                "title": "状态更新",
                 "data": {
-                    "update_period": "完整状态刷新间隔（秒）",
-                    "idle_release": "登录或最后一次写入后释放蓝牙连接（秒，0 = 保持连接）",
-                    "connection_timeout": "连接超时（秒）",
-                    "bluez_start_notify": "使用 BlueZ start-notify 提示（Linux）"
+                    "update_period": "备用刷新间隔"
+                },
+                "data_description": {
+                    "update_period": "设备通常会实时推送状态；此间隔用于补充读取完整状态。"
+                }
+            },
+            "advanced": {
+                "title": "高级连接设置",
+                "description": "通常无需修改。仅在排查连接问题或需要与米家交替使用时调整。",
+                "data": {
+                    "idle_release": "自动释放连接时间",
+                    "connection_timeout": "连接等待时间",
+                    "bluez_start_notify": "Linux 蓝牙兼容模式"
+                },
+                "data_description": {
+                    "idle_release": "连接成功或操作设备后，经过此时间释放蓝牙连接。设为 0 保持连接。后续刷新仍会重新连接，并不会暂停集成。",
+                    "connection_timeout": "等待设备响应连接的最长时间。",
+                    "bluez_start_notify": "仅用于 Linux 蓝牙通知异常的排查；使用远程蓝牙代理时通常不需要。"
                 }
             }
         }

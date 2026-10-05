@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -81,6 +82,7 @@ class AD1204USceneModeSelect(AD1204UEntity, SelectEntity):
 
 
 class AD1204UScreenSaveTimeSelect(AD1204UEntity, SelectEntity):
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_translation_key = "screen_save_time"
     _attr_options = list(SCREEN_SAVE_TIME_BY_VALUE.values())
 
@@ -107,6 +109,7 @@ class AD1204UScreenSaveTimeSelect(AD1204UEntity, SelectEntity):
 
 
 class AD1204UDeviceLanguageSelect(AD1204UEntity, SelectEntity):
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_translation_key = "device_language"
     _attr_options = list(DEVICE_LANGUAGE_BY_VALUE.values())
 

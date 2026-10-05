@@ -12,9 +12,16 @@ from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_ADDRESS, CONF_TOKEN
 from homeassistant.core import callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -41,6 +48,7 @@ from .const import (
     DEFAULT_UPDATE_PERIOD,
     DOMAIN,
 )
+from .coordinator import AD1204UCoordinator
 from .lib.constants import AD1204_LOCAL_NAME, AD1204_PRODUCT_ID
 from .lib.fe95 import parse_fe95
 from .lib.scanner import get_service_data
@@ -286,7 +294,11 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         assert self._fetched_token is not None
-        return self._create_entry(self._fetched_token)
+        error = await self._validate_token(self._fetched_token)
+        if error:
+            self._fetch_error = error
+            return await self.async_step_cloud_error()
+        return self._finish(self._fetched_token)
 
     async def async_step_cloud_error(
         self,
@@ -299,8 +311,8 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="cloud_error",
             data_schema=vol.Schema({}),
-            description_placeholders={"reason": reason},
             errors={"base": reason},
+            last_step=False,
         )
 
     async def async_step_token(
@@ -312,7 +324,9 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
             token_hex, token_error = _normalize_token(user_input[CONF_TOKEN])
             if token_error is None:
                 assert token_hex is not None
-                return self._create_entry(token_hex)
+                token_error = await self._validate_token(token_hex)
+                if token_error is None:
+                    return self._finish(token_hex)
             errors[CONF_TOKEN] = token_error
 
         return self.async_show_form(
@@ -329,34 +343,44 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask for a replacement token after a confirmed login rejection."""
         self._address = entry_data[CONF_ADDRESS]
         self._name = entry_data.get(CONF_LOCAL_NAME) or DEFAULT_DEVICE_NAME
-        return await self.async_step_reauth_confirm()
+        return await self.async_step_method()
 
-    async def async_step_reauth_confirm(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ) -> ConfigFlowResult:
-        """Store a replacement token and reload the existing entry."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            token_hex, token_error = _normalize_token(user_input[CONF_TOKEN])
-            if token_error is None:
-                assert token_hex is not None
-                entry_id = self.context.get("entry_id")
-                assert entry_id is not None
-                entry = self.hass.config_entries.async_get_entry(entry_id)
-                assert entry is not None
-                return self.async_update_reload_and_abort(
-                    entry,
-                    data={**entry.data, CONF_TOKEN: token_hex},
-                )
-            errors[CONF_TOKEN] = token_error
-
-        return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=_token_schema(),
-            errors=errors,
-            description_placeholders={"name": self._name or DEFAULT_DEVICE_NAME},
+    async def _validate_token(self, token_hex: str) -> str | None:
+        assert self._address is not None
+        options = (
+            self._get_reauth_entry().options if self.source == SOURCE_REAUTH else {}
         )
+        coordinator = AD1204UCoordinator(
+            self.hass,
+            config_entry=None,
+            address=self._address,
+            token=bytes.fromhex(token_hex),
+            name=self._name or DEFAULT_DEVICE_NAME,
+            update_interval=DEFAULT_UPDATE_PERIOD,
+            idle_release=0,
+            connection_timeout=float(
+                options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT)
+            ),
+            bluez_start_notify=bool(options.get(CONF_BLUEZ_START_NOTIFY, False)),
+        )
+        try:
+            await coordinator.async_validate_connection()
+        except ConfigEntryAuthFailed:
+            return "invalid_auth"
+        except (UpdateFailed, TimeoutError):
+            return "cannot_connect"
+        except Exception:
+            _LOGGER.exception("Unexpected error validating charger connection")
+            return "unknown"
+        return None
+
+    def _finish(self, token_hex: str) -> ConfigFlowResult:
+        if self.source == SOURCE_REAUTH:
+            entry = self._get_reauth_entry()
+            return self.async_update_reload_and_abort(
+                entry, data_updates={CONF_TOKEN: token_hex}
+            )
+        return self._create_entry(token_hex)
 
     @staticmethod
     def async_get_options_flow(config_entry: Any) -> OptionsFlow:
@@ -412,50 +436,59 @@ class AD1204UOptionsFlow(OptionsFlow):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        options = self._config_entry.options
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_UPDATE_PERIOD,
-                        default=options.get(CONF_UPDATE_PERIOD, DEFAULT_UPDATE_PERIOD),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=5, max=3600, step=1, mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="s",
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_IDLE_RELEASE,
-                        default=options.get(CONF_IDLE_RELEASE, DEFAULT_IDLE_RELEASE),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=0, max=3600, step=1, mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="s",
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_CONNECTION_TIMEOUT,
-                        default=options.get(
-                            CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=5, max=120, step=1, mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="s",
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_BLUEZ_START_NOTIFY,
-                        default=options.get(CONF_BLUEZ_START_NOTIFY, False),
-                    ): BooleanSelector(),
-                }
-            ),
+        return self.async_show_menu(
+            step_id="init", menu_options=["general", "advanced"]
         )
+
+    async def async_step_general(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        return self._show_options("general", user_input)
+
+    async def async_step_advanced(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        return self._show_options("advanced", user_input)
+
+    def _show_options(
+        self,
+        step_id: str,
+        user_input: dict[str, Any] | None,
+    ) -> ConfigFlowResult:
+        options = self._config_entry.options
+        if user_input is not None:
+            return self.async_create_entry(title="", data={**options, **user_input})
+        fields = {}
+        numbers = (
+            [(CONF_UPDATE_PERIOD, DEFAULT_UPDATE_PERIOD, 5, 3600)]
+            if step_id == "general"
+            else [
+                (CONF_IDLE_RELEASE, DEFAULT_IDLE_RELEASE, 0, 3600),
+                (CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT, 5, 120),
+            ]
+        )
+        for key, default, minimum, maximum in numbers:
+            fields[vol.Required(key, default=options.get(key, default))] = (
+                NumberSelector(
+                    NumberSelectorConfig(
+                        min=minimum,
+                        max=maximum,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="s",
+                    )
+                )
+            )
+        if step_id == "advanced":
+            fields[
+                vol.Required(
+                    CONF_BLUEZ_START_NOTIFY,
+                    default=options.get(CONF_BLUEZ_START_NOTIFY, False),
+                )
+            ] = BooleanSelector()
+        return self.async_show_form(step_id=step_id, data_schema=vol.Schema(fields))
 
 
 def _looks_like_ad1204u(info: BluetoothServiceInfoBleak) -> bool:

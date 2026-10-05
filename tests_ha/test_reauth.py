@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.const import CONF_ADDRESS, CONF_TOKEN
@@ -36,8 +36,13 @@ async def test_reauth_updates_canonical_token_and_reloads(
         context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
         data=dict(entry.data),
     )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["cloud", "manual"]
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "manual"},
+    )
+    assert result["step_id"] == "token"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -46,7 +51,13 @@ async def test_reauth_updates_canonical_token_and_reloads(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_TOKEN: "token_not_hex"}
 
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload_entry:
+    with (
+        patch.object(hass.config_entries, "async_schedule_reload") as reload_entry,
+        patch(
+            "custom_components.cuktech_ble.config_flow.AD1204UCoordinator.async_validate_connection",
+            new=AsyncMock(),
+        ) as validate,
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {CONF_TOKEN: " ".join(["AB"] * 12)},
@@ -60,3 +71,4 @@ async def test_reauth_updates_canonical_token_and_reloads(
         CONF_TOKEN: UPDATED_TOKEN_HEX,
     }
     reload_entry.assert_called_once_with(entry.entry_id)
+    validate.assert_awaited_once()

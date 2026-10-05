@@ -24,25 +24,24 @@ That's it — HA creates one device per charger with sensors for each port.
 
 ## Firmware version and feature availability
 
-The official Mi Home plugin switches how it controls fast-charging
-protocols based on a firmware-version threshold: firmware **newer than
-`2.1.2_0040`** exposes per-port PD/PPS/UFCS toggles (property `2.21`);
-older firmware instead shows a single global UFCS/SCP/MiPPS gate
-(property `2.7`). This integration deliberately does **not** replicate
-that gate in code — it exposes whatever the device reports. That means:
+Fast-charging controls follow the firmware capabilities used by Mi Home:
 
-- The three **global** protocol switches (SCP / MiPPS / UFCS-C1/C2) and the
-  per-port **protocol** switches may have differing effect depending on
-  your charger's firmware; if one set behaves as a no-op, the other is the
-  one that firmware honors.
-- The **negotiated protocol**, **C3&A merged-output**, and **delay
-  power-off** sensors are read-only diagnostics populated from device
-  pushes — they need newer firmware (or an app interaction) before values
-  appear.
+- Firmware **newer than `2.1.2_0040`** exposes per-port protocol switches.
+- Firmware **`2.1.2_0040` or older** exposes global SCP / MiPPS / UFCS-C1/C2
+  switches.
+- If the firmware version cannot be identified, both sets are available as
+  **disabled-by-default** entities for manual testing.
 
-Check the firmware version on the charger's device page in Home Assistant;
-if a control doesn't take effect, toggle the equivalent in Mi Home once
-and watch which sensor changes.
+Previously registered controls that do not match the firmware are disabled.
+Explicit user-disabled controls stay disabled when the firmware changes.
+
+The negotiated protocol, C3&A merged-output, and delay power-off sensors are
+read-only diagnostics populated from device pushes. Values may require newer
+firmware or an app interaction.
+
+Setup verifies the local Bluetooth connection before saving the key. If the key
+is rejected later, reauthentication offers the same Mi Home QR login and manual
+entry choices without recreating the device.
 
 ## More
 

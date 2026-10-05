@@ -116,7 +116,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self,
         hass: HomeAssistant,
         *,
-        config_entry: ConfigEntry[Any],
+        config_entry: ConfigEntry[Any] | None,
         address: str,
         token: bytes,
         name: str,
@@ -253,6 +253,13 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         ):
             with suppress(asyncio.CancelledError):
                 await disconnect_task
+
+    async def async_validate_connection(self) -> None:
+        """Verify credentials and read state without retaining a BLE session."""
+        try:
+            await self._async_update_data()
+        finally:
+            await self.async_shutdown()
 
     # ---------------------------------------------------------- connection
     async def _ensure_connected(self) -> MiSession:

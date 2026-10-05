@@ -1415,3 +1415,20 @@ def test_build_snapshot_decodes_delay_minutes_and_bitmap() -> None:
         "c3": None,
         "a": 0,
     }
+
+
+@pytest.mark.parametrize('failure', [None, coordinator_module.UpdateFailed('offline'), asyncio.CancelledError()])
+def test_connection_validation_always_releases_resources(failure) -> None:
+    async def run() -> None:
+        coordinator = object.__new__(AD1204UCoordinator)
+        coordinator._async_update_data = AsyncMock(side_effect=failure)
+        coordinator.async_shutdown = AsyncMock()
+        if failure is None:
+            await coordinator.async_validate_connection()
+        else:
+            with pytest.raises(type(failure)):
+                await coordinator.async_validate_connection()
+        coordinator._async_update_data.assert_awaited_once()
+        coordinator.async_shutdown.assert_awaited_once()
+
+    asyncio.run(run())

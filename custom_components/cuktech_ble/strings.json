@@ -15,11 +15,14 @@
             "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
             "cloud_fetch_cancelled": "Fetching the Xiaomi device list was cancelled.",
             "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
-            "cloud_unknown": "Unknown cloud error."
+            "cloud_unknown": "Unknown cloud error.",
+            "invalid_auth": "The charger rejected this Bluetooth key. Retrieve it again from Mi Home or check the key you entered.",
+            "cannot_connect": "Cannot connect to the charger. Check power and Bluetooth range, close the charger page in Mi Home, and try again.",
+            "unknown": "An unexpected error occurred while checking the connection. Try again and check the logs if it persists."
         },
         "progress": {
-            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan\u2026",
-            "fetching_devices": "Fetching device list from the Xiaomi cloud\u2026"
+            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan…",
+            "fetching_devices": "Fetching device list from the Xiaomi cloud…"
         },
         "step": {
             "bluetooth_confirm": {
@@ -31,16 +34,16 @@
                 }
             },
             "method": {
-                "title": "Choose how to provide the BLE token",
-                "description": "The CUKTECH AD1204U needs a 12-byte BLE token before it can be read. You can fetch it automatically from your Xiaomi account, or paste one you already have.",
+                "title": "Connect your charger",
+                "description": "Retrieve a connection key using Mi Home, or enter an existing key. The key is used for local Bluetooth access.",
                 "menu_options": {
-                    "cloud": "Fetch from Xiaomi cloud (QR login)",
-                    "manual": "Enter token manually"
+                    "cloud": "Sign in with Mi Home",
+                    "manual": "Enter a connection key"
                 }
             },
             "cloud_region": {
                 "title": "Xiaomi account region",
-                "description": "Pick the region your Mi Home account is registered in. If unsure, try **cn** first, then **de** or **sg**.",
+                "description": "Choose the region selected in your Mi Home app settings.",
                 "data": {
                     "region": "Region"
                 }
@@ -50,21 +53,15 @@
                 "description": "Open the Mi Home app, tap the scan icon, and scan the QR code below.\n\n![QR code]({qr_url})"
             },
             "cloud_error": {
-                "title": "Cloud login problem",
-                "description": "Something went wrong: **{reason}**.\n\nSubmit to go back and try again."
+                "title": "Retry Mi Home connection",
+                "description": "Follow the guidance below, then try again.",
+                "submit": "Retry"
             },
             "token": {
-                "title": "Enter BLE token for {name}",
-                "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
+                "title": "Connect {name}",
+                "description": "Enter the 24-character hexadecimal Bluetooth key for this charger. The connection will be verified before saving. You can also go back and choose Mi Home sign-in.",
                 "data": {
-                    "token": "BLE token (hex)"
-                }
-            },
-            "reauth_confirm": {
-                "title": "Update BLE token for {name}",
-                "description": "The charger rejected its saved BLE token. Enter a replacement 24-character (12-byte) hex token.",
-                "data": {
-                    "token": "New BLE token (hex)"
+                    "token": "Bluetooth connection key"
                 }
             }
         }
@@ -87,6 +84,14 @@
         "binary_sensor": {
             "port_in_use": {
                 "name": "In use"
+            },
+            "c3_a_merged": {
+                "name": "C3&A merged output"
+            }
+        },
+        "button": {
+            "factory_reset": {
+                "name": "Reset device settings"
             }
         },
         "sensor": {
@@ -112,10 +117,26 @@
                 }
             },
             "pdo_cap": {
-                "name": "PDO cap"
+                "name": "Negotiated power limit"
             },
             "total_power": {
                 "name": "Total power"
+            },
+            "negotiated_protocol": {
+                "name": "Negotiated protocol",
+                "state": {
+                    "5v": "5V",
+                    "qc": "QC",
+                    "afc": "AFC",
+                    "fcp": "FCP",
+                    "scp": "SCP",
+                    "pd": "PD",
+                    "pps": "PPS",
+                    "ufcs": "UFCS"
+                }
+            },
+            "delay_poweroff": {
+                "name": "Delay power-off"
             }
         },
         "switch": {
@@ -129,19 +150,28 @@
                 "name": "Lock screen orientation"
             },
             "port_enable": {
-                "name": "Port enable"
+                "name": "Port output"
             },
             "protocol_pd": {
-                "name": "PD"
+                "name": "Enable PD"
             },
             "protocol_pps": {
-                "name": "PPS"
+                "name": "Enable PPS"
             },
             "protocol_ufcs": {
-                "name": "UFCS"
+                "name": "Enable UFCS"
             },
             "protocol_scp": {
-                "name": "SCP"
+                "name": "Enable SCP"
+            },
+            "protocol_gate_scp": {
+                "name": "Enable SCP"
+            },
+            "protocol_gate_mipps": {
+                "name": "Enable MiPPS"
+            },
+            "protocol_gate_ufcs": {
+                "name": "Enable UFCS (C1/C2)"
             }
         },
         "select": {
@@ -155,7 +185,7 @@
                 }
             },
             "screen_save_time": {
-                "name": "Screen on time",
+                "name": "Screen on duration",
                 "state": {
                     "1_min": "1 Min",
                     "5_min": "5 Min",
@@ -176,11 +206,32 @@
     "options": {
         "step": {
             "init": {
+                "menu_options": {
+                    "general": "State updates",
+                    "advanced": "Advanced connection settings"
+                }
+            },
+            "general": {
+                "title": "State updates",
                 "data": {
-                    "update_period": "Full-state refresh interval (seconds)",
-                    "idle_release": "Release BLE connection after login or last write (seconds, 0 = keep connected)",
-                    "connection_timeout": "Connection timeout (seconds)",
-                    "bluez_start_notify": "Use BlueZ start-notify hint (Linux)"
+                    "update_period": "Fallback refresh interval"
+                },
+                "data_description": {
+                    "update_period": "The charger normally pushes live updates. This interval controls fallback reads of the full state."
+                }
+            },
+            "advanced": {
+                "title": "Advanced connection settings",
+                "description": "Defaults normally work. Adjust these settings when troubleshooting or sharing the charger with Mi Home.",
+                "data": {
+                    "idle_release": "Connection release delay",
+                    "connection_timeout": "Connection timeout",
+                    "bluez_start_notify": "Linux Bluetooth compatibility mode"
+                },
+                "data_description": {
+                    "idle_release": "Release Bluetooth this long after connecting or controlling the charger. Set to 0 to keep the connection. Later refreshes reconnect; this does not pause the integration.",
+                    "connection_timeout": "How long to wait for a Bluetooth connection.",
+                    "bluez_start_notify": "A workaround for Bluetooth notification problems on Linux. Usually unnecessary with remote Bluetooth proxies."
                 }
             }
         }

@@ -7,7 +7,8 @@ fetch — no password, no stored credentials, and the integration never talks
 to Mi Cloud again after setup.
 
 If the charger later rejects a saved token, Home Assistant starts a
-re-authentication flow so you can replace it without deleting the device.
+re-authentication flow with both Mi Home QR login and manual key entry. The
+replacement is verified before saving, without deleting the device.
 
 If you'd rather grab the token outside Home Assistant:
 
@@ -31,7 +32,7 @@ One parent device per charger, with a sub-device per port (C1, C2, C3, A).
 All sub-devices inherit the parent's area.
 
 Per port: **power** (W), **voltage** (V), **current** (A), **protocol**
-(diagnostic), **PDO cap** (W, diagnostic), **negotiated protocol**
+(diagnostic), **Negotiated power limit** (W, diagnostic), **negotiated protocol**
 (diagnostic enum), **delay power-off** (min, diagnostic — reflected from
 device pushes; no setter). There's also a charger-level **total power**
 sensor.
@@ -41,23 +42,28 @@ Charger-level controls (on the parent device):
 - **Scene mode** (select): AI Mode / Hybrid / Single / Dual.
 - **USB-A always on** (switch): keeps the USB-A rail energized (officially
   a 4-hour trickle mode).
-- **Screen off when idle** (switch): charger display auto-sleeps.
-- **Lock screen orientation** (switch): disables display auto-rotate.
-- **SCP / MiPPS / UFCS (C1/C2)** (switches): global fast-charging protocol
-  gates; see the firmware note below.
-- **Reset to default** (button): restores all charger settings to their
+- **Screen off when idle** (configuration switch): charger display auto-sleeps.
+- **Lock screen orientation** (configuration switch): disables display auto-rotate.
+- **Enable SCP / MiPPS / UFCS (C1/C2)** (configuration switches): global
+  fast-charging settings on older firmware; see the firmware note below.
+- **Reset device settings** (button): restores all charger settings to their
   factory defaults (the Mi Home "Reset to default" action).
+
+Screen on duration and device language are also configuration entities.
+Per-port output switches are ordinary controls.
 
 ## Options
 
-**Settings → Devices & services → CUKTECH BLE → Configure**:
+**Settings → Devices & services → CUKTECH BLE → Configure** offers **State
+updates** and **Advanced connection settings**. Saving either page preserves
+the settings on the other page. Connection tuning is normally unnecessary.
 
 | Option | Default | Range | Meaning |
 |---|---|---|---|
-| Reconciliation interval | 30 s | 5–3600 | Full BLE read when live property pushes are quiet |
-| Idle release | 300 s | 0–3600 | Release the BLE session this long after login or the last write; scheduled polls do not extend it (`0` = stay connected) |
-| Connection timeout | 15 s | 5–120 | How long to wait for a BLE connect |
-| BlueZ `start-notify` hint | off | — | Linux-only workaround for CCCD flakiness |
+| Fallback refresh interval (State updates) | 30 s | 5–3600 | Full BLE read when live property pushes are quiet |
+| Connection release delay (Advanced) | 300 s | 0–3600 | Release the BLE session this long after login or the last write; scheduled polls do not extend it (`0` = stay connected) |
+| Connection timeout (Advanced) | 15 s | 5–120 | How long to wait for a BLE connect |
+| Linux Bluetooth compatibility mode (Advanced) | off | — | Linux-only workaround for CCCD flakiness |
 
 ## Notes and limits
 
@@ -65,11 +71,11 @@ Charger-level controls (on the parent device):
   orientation, scene mode, the three global protocol gates, per-port
   enable + per-port PD/PPS/UFCS/SCP protocol switches, and the factory
   reset button.
-- **Firmware-version gating (not enforced in code).** The official app
-  shows per-port protocol toggles (property `2.21`) only on firmware newer
-  than `2.1.2_0040`, otherwise a single global gate (property `2.7`). This
-  integration exposes both unconditionally — on a given firmware one set is
-  the effective one and the other may no-op. See the README note.
+- **Firmware-version gating.** Firmware newer than `2.1.2_0040` exposes
+  per-port protocol settings; older versions expose global protocol settings.
+  Unknown versions leave both sets disabled by default. Previously registered
+  incompatible controls are disabled automatically; user-disabled entities
+  remain disabled.
 - **Live updates:** while connected, the charger pushes changed port and
   setting values. The integration ACKs and coalesces them immediately; the
   interval above is a fallback full-state reconciliation, not the primary

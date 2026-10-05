@@ -12,10 +12,13 @@ from homeassistant.components.switch import (
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 
 from . import AD1204UConfigEntry
 from .coordinator import AD1204UCoordinator, AD1204UData
 from .entity import AD1204UEntity
+from .const import DOMAIN
+from .lib.firmware import uses_port_protocols
 from .lib.ports import PORTS, PORT_CTL_BIT
 from .lib.protocol_switches import protocol_ctrl_enabled, protocol_switch_enabled
 
@@ -42,6 +45,7 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
     ),
     AD1204USwitchDescription(
         key="screenoff_while_idle",
+        entity_category=EntityCategory.CONFIG,
         translation_key="screenoff_while_idle",
         siid=2,
         piid=0x0013,
@@ -50,6 +54,7 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
     ),
     AD1204USwitchDescription(
         key="screen_dir_lock",
+        entity_category=EntityCategory.CONFIG,
         translation_key="screen_dir_lock",
         siid=2,
         piid=0x0014,
@@ -113,8 +118,7 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data.coordinator
     entities: list[SwitchEntity] = [
-        AD1204USwitch(coordinator, description=description)
-        for description in SWITCHES
+        AD1204USwitch(coordinator, description=description) for description in SWITCHES
     ]
     # Per-port enable switches (PIID 16 bitmap, read-modify-write).
     for port in PORTS:
@@ -145,7 +149,35 @@ async def async_setup_entry(
                 getter=_protocol_gate_getter(gate),
             )
         )
-    async_add_entities(entities)
+    port_protocols = uses_port_protocols(coordinator.firmware_version)
+    registry = er.async_get(hass)
+    supported = []
+    for entity in entities:
+        is_port_protocol = isinstance(entity, AD1204UProtocolSwitch)
+        if is_port_protocol or isinstance(entity, AD1204UProtocolGateSwitch):
+            # Keep unknown firmware opt-in; preserve any explicit user choice.
+            entity._attr_entity_registry_enabled_default = port_protocols is not None
+            assert entity.unique_id is not None
+            entity_id = registry.async_get_entity_id("switch", DOMAIN, entity.unique_id)
+            registered = registry.async_get(entity_id) if entity_id else None
+            incompatible = (
+                port_protocols is not None and is_port_protocol != port_protocols
+            )
+            if incompatible:
+                if registered is not None and registered.disabled_by is None:
+                    registry.async_update_entity(
+                        registered.entity_id,
+                        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+                    )
+                continue
+            if (
+                registered is not None
+                and registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+                and port_protocols is not None
+            ):
+                registry.async_update_entity(registered.entity_id, disabled_by=None)
+        supported.append(entity)
+    async_add_entities(supported)
 
 
 class AD1204USwitch(AD1204UEntity, SwitchEntity):
@@ -189,8 +221,6 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
 
 class AD1204UPortEnableSwitch(AD1204UEntity, SwitchEntity):
     """Per-port power enable switch backed by PIID 16 (port_ctl bitmap)."""
-
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -243,9 +273,7 @@ class AD1204UProtocolSwitch(AD1204UEntity, SwitchEntity):
             key=f"{port}_{switch_name}_protocol",
             translation_key=f"protocol_{switch_name}",
         )
-        self._attr_unique_id = (
-            f"{coordinator.address}_{port}_{switch_name}_protocol"
-        )
+        self._attr_unique_id = f"{coordinator.address}_{port}_{switch_name}_protocol"
 
     @property
     def is_on(self) -> bool | None:
