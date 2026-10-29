@@ -15,6 +15,7 @@ All scripts run from the repo's `.venv`:
 |---|---|
 | [`ad1204u_fetch_token.py`](ad1204u_fetch_token.py) | Fetch BLE pairing token from Xiaomi Cloud (password + email 2FA). No `micloud` dep — requires `pip install -e ".[cloud-token]"`. Writes `~/.cuktech_ble.token`. |
 | [`ad1204u_read_props.py`](ad1204u_read_props.py) | One-shot: log in, send `get_properties`, print decoded per-port power + voltage + current + protocol. |
+| [`ad1204u_connection_check.py`](ad1204u_connection_check.py) | Repeat read-only connect/login/read/disconnect cycles; compare A4 settling, MTU acquisition, and reconnect intervals using stage-only JSONL results. |
 | [`sweep_logger.py`](sweep_logger.py) | Persistent BLE session with background KM003C reader. Samples both sources every N seconds, parses KM003C PD events for live contract labels, writes a jsonl log. |
 | [`ad1204u_probe.py`](ad1204u_probe.py) | Log in and log every GATT notification for a fixed duration. Used for reverse-engineering new properties. |
 | [`decrypt_btsnoop_miot.py`](decrypt_btsnoop_miot.py) | Android btsnoop + BLE token to decrypted MIOT CSV rows (`ts, opcode, siid, piid, value, status`). Used to turn Mi Home captures into property evidence. |
