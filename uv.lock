@@ -992,7 +992,7 @@ wheels = [
 
 [[package]]
 name = "cuktech-ad1204u"
-version = "0.3.5"
+version = "0.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "bleak" },
