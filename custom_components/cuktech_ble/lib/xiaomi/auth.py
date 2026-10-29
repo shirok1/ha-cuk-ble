@@ -361,6 +361,9 @@ class MiAuthClient:
                 )
             echo = b"\x00\x00\x05" + challenge[3:]
             await self._write(AVDTP_UUID, echo)
+        # Mi Home's shared A4 transport delays its completion event by 100 ms
+        # after the second echo write. Let the peer settle before login.
+        await asyncio.sleep(0.1)
 
     async def _recv_variant(self, expected_code: int) -> bytes:
         """Receive either an official-variant inline message or a dash-app parcel.

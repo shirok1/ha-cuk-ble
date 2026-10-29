@@ -157,7 +157,21 @@ for turning tablet captures into evidence for new writable properties. Keep
 the token file at mode `0600`; do not put credentials directly in commands or
 commit them to the repository.
 
-### BlueZ MTU quirk
+### A4 greeting completion timing
+
+After the second A4 challenge echo, `greet()` waits 100 ms before returning.
+This follows Mi Home 11.8.707's shared transport (`_m_j.zf2`), which delays
+`com.miot.action.a4.result` by 100 ms after the second echo write completes.
+Keeping the delay in `greet()` covers HA and the diagnostic clients alike.
+The existing 300 ms delay after MIOT initialization serves a different purpose
+(measurement settling) and cannot replace this pre-login interval.
+
+The regression test checks both echoes, the delay, and subsequent login order.
+AD1204U hardware validation remains pending; this change does not establish
+that greeting timing explains all connection failures. No curtain-specific
+reconnect cooldown or nonce rules are applied.
+
+### BlueZ MTU acquisition
 
 BlueZ defaults to ATT MTU 23. The 32-byte `CMD_SEND_INFO` HMAC during login
 splits into two parcels and the AD1204U intermittently rejects multi-parcel

@@ -202,3 +202,34 @@ async def _round_trip() -> None:
 
 def test_register_and_login_round_trip() -> None:
     asyncio.run(_round_trip())
+
+
+def test_greeting_settles_after_both_echoes_before_login(monkeypatch) -> None:
+    """The shared A4 transport completes only after the OEM settling delay."""
+    from cuktech_ble.xiaomi.protocol import GREETING_TRIGGER
+
+    events = []
+
+    class GreetingClient:
+        async def write_gatt_char(self, uuid, data, response=False):
+            events.append(bytes(data))
+
+    async def settle(delay):
+        events.append(("settle", delay))
+
+    async def run():
+        auth = MiAuthClient(GreetingClient())
+        auth._avdtp.queue.put_nowait(bytes.fromhex("00 00 04 00 02"))
+        auth._avdtp.queue.put_nowait(bytes.fromhex("00 00 04 01 02 02"))
+        await auth.greet()
+        await auth._write(UPNP_UUID, CMD_LOGIN)
+
+    monkeypatch.setattr(asyncio, "sleep", settle)
+    asyncio.run(run())
+    assert events == [
+        GREETING_TRIGGER,
+        bytes.fromhex("00 00 05 00 02"),
+        bytes.fromhex("00 00 05 01 02 02"),
+        ("settle", 0.1),
+        CMD_LOGIN,
+    ]
